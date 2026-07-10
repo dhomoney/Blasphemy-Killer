@@ -1,0 +1,54 @@
+# blasphemy-killer default configuration.
+# Copy to ~/.config/blasphemy-killer/config.toml (or pass --config) to override.
+# User config values replace these; the phrase list is replaced wholesale, not merged.
+
+[detection]
+# Padding added around each detected phrase, in milliseconds.
+pad_before_ms = 150
+pad_after_ms = 150
+
+# Phrases are matched case-insensitively and space-insensitively against the
+# transcript ("god damn" also matches "goddamn" and "God-damn,"), always
+# anchored to word boundaries ("christ" never matches inside "christmas").
+phrases = [
+    "god damn",
+    "goddamned",
+    "god damned",
+    "goddammit",
+    "god dammit",
+    "goddamnit",
+    "god damn it",
+    "jesus christ",
+    "jesus h christ",
+    "jesus fucking christ",
+    "oh my god",
+    "oh god",
+    "my god",
+    "good god",
+    "god almighty",
+    "swear to god",
+    "i swear to god",
+    "honest to god",
+    "for god's sake",
+    "god's sake",
+    "for christ's sake",
+    "christ's sake",
+    "for christ sake",
+    "christ almighty",
+    "jesus",
+    "christ",
+    "good lord",
+    "oh lord",
+    "lord almighty",
+]
+
+[transcription]
+model = "small"     # tiny | base | small | medium | large-v3 | distil-small.en | ...
+language = "en"     # "" = auto-detect
+beam_size = 5
+cpu_threads = 0     # 0 = auto
+
+[processing]
+extensions = [".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".ts"]
+write_report = true   # write a <file>.bk.json sidecar describing what was muted
+keep_backup = false   # keep the original as <file>.bak instead of deleting it
