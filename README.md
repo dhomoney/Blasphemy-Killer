@@ -54,7 +54,9 @@ Defaults ship with the package. Override any of them in
 [detection]
 pad_before_ms = 150
 pad_after_ms = 150
-phrases = ["god damn", "jesus christ", "oh my god"]   # replaces the default list
+# Phrases are spelled out here only because matching requires the literal text.
+# (Censored in this example; run --list-phrases to see the actual defaults.)
+phrases = ["g** d***", "j**** c*****", "oh my g**"]   # replaces the default list
 
 [transcription]
 model = "small"
@@ -62,10 +64,10 @@ language = "en"
 ```
 
 Run `blasphemy-killer --list-phrases` to see the effective list. Matching is
-case- and space-insensitive ("god damn" also catches "goddamn" and "God-damn,")
-and anchored to word boundaries ("christ" never matches inside "christmas").
-Note the default list includes standalone "jesus" and "christ", so reverent
-uses are muted too — trim the list if you want different behavior.
+case- and space-insensitive ("g** d***" also catches the one-word and
+hyphenated spellings) and anchored to word boundaries ("c*****" never matches
+inside "christmas"). Note the default list includes the standalone names, so
+reverent uses are muted too — trim the list if you want different behavior.
 
 ## Behavior notes
 
