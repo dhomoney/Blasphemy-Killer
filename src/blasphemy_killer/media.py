@@ -52,10 +52,17 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def arg_path(path: Path) -> str:
+    """Render a path for an ffmpeg/ffprobe argv slot. A relative path starting
+    with '-' would be parsed as an option, so anchor it with './'."""
+    s = str(path)
+    return f"./{s}" if s.startswith("-") else s
+
+
 def probe(path: Path) -> MediaInfo:
     proc = _run([
         "ffprobe", "-v", "error", "-print_format", "json",
-        "-show_format", "-show_streams", str(path),
+        "-show_format", "-show_streams", arg_path(path),
     ])
     if proc.returncode != 0:
         raise MediaError(f"ffprobe failed for {path}: {proc.stderr.strip()}")
@@ -103,10 +110,10 @@ def extract_wav(path: Path, stream: AudioStream, out: Path) -> None:
     """Extract one audio stream as mono 16 kHz PCM WAV (what whisper wants)."""
     proc = _run([
         "ffmpeg", "-y", "-nostdin", "-v", "error",
-        "-i", str(path),
+        "-i", arg_path(path),
         "-map", f"0:a:{stream.index}",
         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
-        str(out),
+        arg_path(out),
     ])
     if proc.returncode != 0:
         raise MediaError(f"audio extraction failed for {path}: {proc.stderr.strip()}")
@@ -139,6 +146,8 @@ def verify_output(original: MediaInfo, candidate: Path) -> MediaInfo:
 
 def atomic_replace(tmp: Path, original: Path, *, keep_backup: bool = False) -> None:
     """Atomically replace original with tmp (same directory, same filesystem)."""
+    # tmp is created 0600 by mkstemp; carry over the original's permissions.
+    os.chmod(tmp, original.stat().st_mode & 0o7777)
     if keep_backup:
         backup = original.with_name(original.name + ".bak")
         os.replace(original, backup)

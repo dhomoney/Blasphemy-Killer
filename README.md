@@ -96,6 +96,11 @@ reverent uses are muted too — trim the list if you want different behavior.
   directory skips it (`--force` overrides). Files with zero matches are stamped
   too, so they aren't re-transcribed. AVI/TS/WAV containers may not retain the
   tag.
+- The tag is signed (HMAC) with a per-machine key auto-generated at
+  `~/.config/blasphemy-killer/marker.key`, so a hostile file can't arrive
+  pre-stamped to dodge cleaning. Unverifiable tags — including files stamped
+  by older versions or on another machine — are reprocessed once and
+  re-stamped.
 - Audio-only files are re-encoded back to their original codec at the original
   bitrate (lossless formats like FLAC and WAV stay lossless).
 - Safety: output is written to a temp file beside the original, checked

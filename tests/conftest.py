@@ -8,6 +8,13 @@ def _ffmpeg(*args: str) -> None:
     subprocess.run(["ffmpeg", "-y", "-nostdin", "-v", "error", *args], check=True)
 
 
+@pytest.fixture(autouse=True)
+def isolated_marker_key(monkeypatch, tmp_path):
+    """Keep marker signing away from the user's real ~/.config key."""
+    from blasphemy_killer import mute
+    monkeypatch.setattr(mute, "KEY_PATH", tmp_path / "marker.key")
+
+
 @pytest.fixture(scope="session")
 def fixture_mp4(tmp_path_factory) -> Path:
     """10s test video: testsrc2 + 440Hz sine, one AAC audio track."""

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 import tempfile
 import time
@@ -11,12 +13,31 @@ from pathlib import Path
 
 import click
 
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _display(text: object) -> str:
+    """Neutralize terminal control/escape sequences in untrusted strings
+    (filenames, file metadata, transcripts, ffmpeg stderr) before echoing."""
+    return _CONTROL_CHARS_RE.sub("?", str(text))
+
+
+def _write_report(report_path: Path, report: dict) -> None:
+    """Write the JSON sidecar, refusing to follow a pre-placed symlink."""
+    fd = os.open(
+        report_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+        0o644,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(report, indent=2))
+
 from . import __version__
 from .config import Config, load_config
 from .download import DownloadError, download, is_url
 from .match import build_intervals, find_matches
 from .media import MediaError, VerifyError, atomic_replace, extract_wav, probe, verify_output
-from .mute import render, stamp_only
+from .mute import marker_valid, render, stamp_only
 
 
 def _timestamp(seconds: float) -> str:
@@ -48,8 +69,10 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
     info = probe(path)
 
     if info.marker and not force:
-        click.echo(f"  skipped (already processed: {info.marker})")
-        return {"status": "skipped"}
+        if marker_valid(info):
+            click.echo(f"  skipped (already processed: {_display(info.marker)})")
+            return {"status": "skipped"}
+        click.echo("  done-marker present but not signed by this machine — reprocessing")
     stream = info.transcription_stream
     if stream is None:
         click.echo("  skipped (no audio streams)")
@@ -72,14 +95,21 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
     )
 
     for m in matches:
-        click.echo(f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] \"{m.text}\"  ({m.phrase})")
+        click.echo(f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] \"{_display(m.text)}\"  ({m.phrase})")
     if not matches:
         click.echo("  no matches found")
 
     if dry_run:
         return {"status": "dry-run", "matches": len(matches)}
 
-    out_tmp = path.with_name(f".{path.stem}.bk-tmp{path.suffix}")
+    # Random name, created 0600 with O_EXCL: not guessable or symlink-plantable
+    # by another writer in a shared directory. Still matches .gitignore's
+    # `.*.bk-tmp.*` pattern.
+    fd, out_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.stem}.bk-tmp.", suffix=path.suffix
+    )
+    os.close(fd)
+    out_tmp = Path(out_name)
     try:
         if intervals:
             render(info, intervals, out_tmp, tmp_dir / "filter.txt")
@@ -102,9 +132,7 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
             "duration": info.duration,
             "elapsed_seconds": round(time.monotonic() - started, 1),
         }
-        path.with_name(path.name + ".bk.json").write_text(
-            json.dumps(report, indent=2), encoding="utf-8"
-        )
+        _write_report(path.with_name(path.name + ".bk.json"), report)
 
     elapsed = time.monotonic() - started
     click.echo(f"  muted {len(intervals)} interval(s) in {elapsed:.0f}s")
@@ -171,7 +199,7 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
         try:
             files.append(download(url, output))
         except DownloadError as exc:
-            click.echo(f"  download failed: {exc}", err=True)
+            click.echo(f"  download failed: {_display(exc)}", err=True)
             failed.append(url)
     files.extend(_collect_files(paths, cfg.extensions, recursive))
 
@@ -183,14 +211,14 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
     with tempfile.TemporaryDirectory(prefix="blasphemy-killer-") as tmp:
         tmp_dir = Path(tmp)
         for path in files:
-            click.echo(f"{path}")
+            click.echo(_display(path))
             try:
                 result = process_file(
                     path, cfg, dry_run=dry_run, force=force,
                     verbose=verbose, tmp_dir=tmp_dir,
                 )
             except (MediaError, VerifyError, OSError) as exc:
-                click.echo(f"  FAILED: {exc}", err=True)
+                click.echo(f"  FAILED: {_display(exc)}", err=True)
                 failed.append(str(path))
                 continue
             if result["status"] == "skipped":
@@ -203,7 +231,7 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
     )
     if failed:
         for name in failed:
-            click.echo(f"  failed: {name}", err=True)
+            click.echo(f"  failed: {_display(name)}", err=True)
         sys.exit(1)
 
 
