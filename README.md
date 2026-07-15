@@ -14,6 +14,19 @@ is re-encoded.
 
 - Python 3.12+
 - ffmpeg / ffprobe on PATH
+- [deno](https://deno.com) on PATH — only needed for downloading URLs.
+  YouTube extraction requires a JavaScript runtime
+  ([yt-dlp EJS](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); without one,
+  yt-dlp warns `No supported JavaScript runtime could be found` and some
+  formats may be missing. Deno is yt-dlp's default runtime and runs the
+  extraction JS fully sandboxed. Install it user-locally with:
+
+  ```bash
+  curl -fsSL https://deno.land/install.sh | sh
+  ```
+
+  or grab the release zip from [denoland/deno](https://github.com/denoland/deno/releases)
+  and put the `deno` binary somewhere on PATH (e.g. `~/.local/bin`).
 
 ## Install
 
