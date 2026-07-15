@@ -49,6 +49,11 @@ beam_size = 5
 cpu_threads = 0     # 0 = auto
 
 [processing]
-extensions = [".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".ts"]
+extensions = [
+    # video
+    ".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".ts",
+    # audio
+    ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav",
+]
 write_report = true   # write a <file>.bk.json sidecar describing what was muted
 keep_backup = false   # keep the original as <file>.bak instead of deleting it

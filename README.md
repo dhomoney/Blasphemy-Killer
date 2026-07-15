@@ -1,7 +1,7 @@
 # blasphemy-killer
 
-Scans video files for spoken phrases that take the Lord's name in vain and mutes
-the audio during those moments — in place, safely.
+Scans video and audio files for spoken phrases that take the Lord's name in
+vain and mutes the audio during those moments — in place, safely.
 
 How it works: the audio is transcribed locally with
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (word-level
@@ -38,6 +38,9 @@ blasphemy-killer https://youtube.com/watch?v=... -o clean-video.mp4
 
 # Keep the original as movie.mp4.bak
 blasphemy-killer --keep-backup movie.mp4
+
+# Audio files work too (mp3, m4a, flac, ogg, opus, wav)
+blasphemy-killer podcast.mp3
 ```
 
 Useful flags: `-m/--model` (whisper model, default `small`; try `medium` for
@@ -75,7 +78,10 @@ reverent uses are muted too — trim the list if you want different behavior.
   commentary tracks contain the same dialogue).
 - Each cleaned file gets a `BLASPHEMY_KILLER` metadata tag so re-running over a
   directory skips it (`--force` overrides). Files with zero matches are stamped
-  too, so they aren't re-transcribed. AVI/TS containers may not retain the tag.
+  too, so they aren't re-transcribed. AVI/TS/WAV containers may not retain the
+  tag.
+- Audio-only files are re-encoded back to their original codec at the original
+  bitrate (lossless formats like FLAC and WAV stay lossless).
 - Safety: output is written to a temp file beside the original, checked
   (duration, stream counts, video codec), then atomically swapped in. On any
   failure the original is untouched.
