@@ -21,6 +21,22 @@ is re-encoded.
 uv sync            # or: pip install -e .
 ```
 
+`uv sync` installs the `blasphemy-killer` command into the project's virtual
+environment (`.venv/`), so it isn't on your PATH by default. Run it either
+way:
+
+```bash
+# Option 1: let uv handle the venv (run from the project directory)
+uv run blasphemy-killer --dry-run movie.mp4
+
+# Option 2: activate the venv, then use the command directly
+source .venv/bin/activate
+blasphemy-killer --dry-run movie.mp4
+```
+
+The examples below assume an activated venv; prefix them with `uv run`
+otherwise.
+
 ## Usage
 
 ```bash
