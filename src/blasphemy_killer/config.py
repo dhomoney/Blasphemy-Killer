@@ -13,8 +13,8 @@ USER_CONFIG_PATH = Path.home() / ".config" / "blasphemy-killer" / "config.toml"
 @dataclass
 class Config:
     phrases: list[str] = field(default_factory=list)
-    pad_before_ms: int = 150
-    pad_after_ms: int = 150
+    pad_before_ms: int = 300
+    pad_after_ms: int = 300
     model: str = "small"
     language: str = "en"
     beam_size: int = 5
@@ -60,8 +60,8 @@ def load_config(config_path: Path | None = None) -> Config:
 
     return Config(
         phrases=list(detection.get("phrases", [])),
-        pad_before_ms=int(detection.get("pad_before_ms", 150)),
-        pad_after_ms=int(detection.get("pad_after_ms", 150)),
+        pad_before_ms=int(detection.get("pad_before_ms", 300)),
+        pad_after_ms=int(detection.get("pad_after_ms", 300)),
         model=str(transcription.get("model", "small")),
         language=str(transcription.get("language", "en")),
         beam_size=int(transcription.get("beam_size", 5)),

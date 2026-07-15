@@ -41,7 +41,7 @@ blasphemy-killer --keep-backup movie.mp4
 ```
 
 Useful flags: `-m/--model` (whisper model, default `small`; try `medium` for
-mumbled dialogue), `--pad-ms` (mute padding around each phrase, default 150),
+mumbled dialogue), `--pad-ms` (mute padding around each phrase, default 300),
 `--force` (reprocess already-cleaned files), `--list-phrases`,
 `--no-report`, `-n/--dry-run`.
 
@@ -52,8 +52,8 @@ Defaults ship with the package. Override any of them in
 
 ```toml
 [detection]
-pad_before_ms = 150
-pad_after_ms = 150
+pad_before_ms = 300
+pad_after_ms = 300
 # Phrases are spelled out here only because matching requires the literal text.
 # (Censored in this example; run --list-phrases to see the actual defaults.)
 phrases = ["g** d***", "j**** c*****", "oh my g**"]   # replaces the default list

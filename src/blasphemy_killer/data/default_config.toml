@@ -4,8 +4,8 @@
 
 [detection]
 # Padding added around each detected phrase, in milliseconds.
-pad_before_ms = 150
-pad_after_ms = 150
+pad_before_ms = 300
+pad_after_ms = 300
 
 # Phrases are matched case-insensitively and space-insensitively against the
 # transcript ("god damn" also matches "goddamn" and "God-damn,"), always
