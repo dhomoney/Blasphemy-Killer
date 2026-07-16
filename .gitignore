@@ -8,3 +8,4 @@ build/
 *.bk.json
 *.bak
 .*.bk-tmp.*
+cookies.txt
