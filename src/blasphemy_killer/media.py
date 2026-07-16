@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import subprocess
@@ -147,7 +148,14 @@ def verify_output(original: MediaInfo, candidate: Path) -> MediaInfo:
 def atomic_replace(tmp: Path, original: Path, *, keep_backup: bool = False) -> None:
     """Atomically replace original with tmp (same directory, same filesystem)."""
     # tmp is created 0600 by mkstemp; carry over the original's permissions.
-    os.chmod(tmp, original.stat().st_mode & 0o7777)
+    # Filesystems without chmod support (CIFS/SMB without POSIX extensions,
+    # some FUSE mounts) raise EPERM/ENOTSUP; the mount options dictate the
+    # mode there, so skipping is correct.
+    try:
+        os.chmod(tmp, original.stat().st_mode & 0o7777)
+    except OSError as e:
+        if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise
     if keep_backup:
         backup = original.with_name(original.name + ".bak")
         os.replace(original, backup)

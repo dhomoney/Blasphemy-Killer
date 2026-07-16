@@ -117,7 +117,7 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
             stamp_only(info, out_tmp)
         verify_output(info, out_tmp)
         atomic_replace(out_tmp, path, keep_backup=cfg.keep_backup and bool(intervals))
-    except MediaError:
+    except (MediaError, OSError):
         out_tmp.unlink(missing_ok=True)
         raise
 
