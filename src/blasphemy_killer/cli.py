@@ -15,11 +15,19 @@ import click
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
+_MASK_RE = re.compile(r"(?<=[\w'])[\w']")
+
 
 def _display(text: object) -> str:
     """Neutralize terminal control/escape sequences in untrusted strings
     (filenames, file metadata, transcripts, ffmpeg stderr) before echoing."""
     return _CONTROL_CHARS_RE.sub("?", str(text))
+
+
+def _mask(text: str) -> str:
+    """Obscure a matched blasphemy for display: keep each word's first
+    character and star out the rest ("Jesus Christ" -> "J**** C*****")."""
+    return _MASK_RE.sub("*", text)
 
 
 def _write_report(report_path: Path, report: dict) -> None:
@@ -95,7 +103,7 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
     )
 
     for m in matches:
-        click.echo(f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] \"{_display(m.text)}\"  ({m.phrase})")
+        click.echo(f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] \"{_display(_mask(m.text))}\"  ({_mask(m.phrase)})")
     if not matches:
         click.echo("  no matches found")
 
