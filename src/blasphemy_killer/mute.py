@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import math
 import os
+import re
 import secrets
 import subprocess
 from datetime import date
@@ -39,6 +41,27 @@ def build_filter_script(streams: list[AudioStream], intervals: list[tuple[float,
         for stream in streams
     ]
     return ";\n".join(chains) + "\n"
+
+
+@functools.lru_cache(maxsize=1)
+def _ffmpeg_major() -> int:
+    """Major version of the ffmpeg on PATH; 0 when it can't be determined
+    (git builds report 'N-<rev>-g<hash>', which is always newer than 7.0)."""
+    try:
+        proc = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+    except OSError:
+        return 0
+    m = re.search(r"^ffmpeg version n?(\d+)\.", proc.stdout)
+    return int(m.group(1)) if m else 0
+
+
+def filter_script_args(filter_script: Path) -> list[str]:
+    """Point ffmpeg at a filter graph held in a file. ffmpeg 7.0 added the
+    generic '-/<option> <file>' form and 9.0 dropped -filter_complex_script,
+    so use the old flag only for the versions that predate the new one."""
+    if 0 < _ffmpeg_major() < 7:
+        return ["-filter_complex_script", arg_path(filter_script)]
+    return ["-/filter_complex", arg_path(filter_script)]
 
 
 def _marker_hmac_key() -> bytes:
@@ -117,9 +140,9 @@ def render(src: MediaInfo, intervals: list[tuple[float, float]],
     """Render a copy of src with audio muted over intervals; video/subs stream-copied."""
     filter_script.write_text(build_filter_script(src.audio, intervals), encoding="utf-8")
 
-    cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(src.path),
-           "-filter_complex_script", arg_path(filter_script),
-           "-map", "0:v?"]
+    cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(src.path)]
+    cmd += filter_script_args(filter_script)
+    cmd += ["-map", "0:v?"]
     for stream in src.audio:
         cmd += ["-map", f"[a{stream.index}]"]
     cmd += ["-map", "0:s?", "-map", "0:t?",
