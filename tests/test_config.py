@@ -31,3 +31,14 @@ def test_user_config_overrides(tmp_path: Path):
     assert cfg.model == "medium"
     # untouched sections keep defaults
     assert cfg.write_report is True
+
+
+def test_cookies_default_unset():
+    assert load_config().cookies is None
+
+
+def test_cookies_from_config(tmp_path: Path):
+    override = tmp_path / "config.toml"
+    override.write_text('[download]\ncookies = "~/cookies.txt"\n')
+    cfg = load_config(override)
+    assert cfg.cookies == Path.home() / "cookies.txt"

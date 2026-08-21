@@ -22,6 +22,7 @@ class Config:
     extensions: list[str] = field(default_factory=list)
     write_report: bool = True
     keep_backup: bool = False
+    cookies: Path | None = None
 
     @property
     def pad_before(self) -> float:
@@ -57,6 +58,9 @@ def load_config(config_path: Path | None = None) -> Config:
     detection = data.get("detection", {})
     transcription = data.get("transcription", {})
     processing = data.get("processing", {})
+    downloading = data.get("download", {})
+
+    cookies = downloading.get("cookies") or None
 
     return Config(
         phrases=list(detection.get("phrases", [])),
@@ -69,4 +73,5 @@ def load_config(config_path: Path | None = None) -> Config:
         extensions=[e.lower() for e in processing.get("extensions", [])],
         write_report=bool(processing.get("write_report", True)),
         keep_backup=bool(processing.get("keep_backup", False)),
+        cookies=Path(str(cookies)).expanduser() if cookies else None,
     )

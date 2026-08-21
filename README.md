@@ -65,6 +65,9 @@ blasphemy-killer -r /media/videos
 # Download with yt-dlp, then clean the download
 blasphemy-killer https://youtube.com/watch?v=... -o clean-video.mp4
 
+# Same, but authenticated (age-gated / members-only / region-locked)
+blasphemy-killer --cookies cookies.txt https://youtube.com/watch?v=... -o clean.mp4
+
 # Keep the original as movie.mp4.bak
 blasphemy-killer --keep-backup movie.mp4
 
@@ -75,7 +78,31 @@ blasphemy-killer podcast.mp3
 Useful flags: `-m/--model` (whisper model, default `small`; try `medium` for
 mumbled dialogue), `--pad-ms` (mute padding around each phrase, default 300),
 `--force` (reprocess already-cleaned files), `--list-phrases`,
-`--no-report`, `-n/--dry-run`.
+`--no-report`, `-n/--dry-run`, `--cookies`.
+
+### Cookies for URL downloads
+
+Videos that need a logged-in session (age-gated, members-only, private, or
+region-locked) download only if yt-dlp gets your cookies. Export them in
+Netscape format — e.g. with the "Get cookies.txt LOCALLY" browser extension —
+and point `--cookies` at the file:
+
+```bash
+blasphemy-killer --cookies ~/cookies.txt https://youtube.com/watch?v=...
+```
+
+To avoid passing it every time, set it in your config instead:
+
+```toml
+[download]
+cookies = "~/.config/blasphemy-killer/cookies.txt"
+```
+
+`--cookies` overrides the config value. Note that yt-dlp may rewrite the file
+with refreshed cookies after a download, and that the file grants access to
+your logged-in accounts — keep it out of version control (this repo's
+`.gitignore` already excludes `cookies.txt`) and readable only by you
+(`chmod 600`).
 
 ## Configuration
 

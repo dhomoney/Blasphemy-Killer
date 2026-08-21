@@ -155,6 +155,7 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
 @click.option("--language", help='Force transcription language, or "auto".')
 @click.option("-n", "--dry-run", is_flag=True, help="Report matches without modifying anything.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output filename for a downloaded URL (single-URL invocations only).")
+@click.option("--cookies", "cookies", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Netscape-format cookies.txt passed to yt-dlp for URL downloads.")
 @click.option("--force", is_flag=True, help="Reprocess files that carry the done-marker.")
 @click.option("--pad-ms", type=int, help="Symmetric mute padding in milliseconds.")
 @click.option("--threads", type=int, help="CPU threads for transcription.")
@@ -164,7 +165,8 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
 @click.option("-v", "--verbose", is_flag=True)
 @click.version_option(__version__)
 def main(inputs, recursive, config_path, model, language, dry_run, output,
-         force, pad_ms, threads, no_report, keep_backup, list_phrases, verbose):
+         cookies, force, pad_ms, threads, no_report, keep_backup, list_phrases,
+         verbose):
     """Mute audio segments that take the Lord's name in vain in video files.
 
     PATH_OR_URL may be video files, directories, or http(s) URLs
@@ -183,6 +185,8 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
         cfg.write_report = False
     if keep_backup:
         cfg.keep_backup = True
+    if cookies is not None:
+        cfg.cookies = cookies
 
     if list_phrases:
         for phrase in cfg.phrases:
@@ -205,7 +209,7 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
     for url in urls:
         click.echo(f"downloading {url}")
         try:
-            files.append(download(url, output))
+            files.append(download(url, output, cfg.cookies))
         except DownloadError as exc:
             click.echo(f"  download failed: {_display(exc)}", err=True)
             failed.append(url)

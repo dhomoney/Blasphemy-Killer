@@ -13,9 +13,11 @@ def is_url(arg: str) -> bool:
     return arg.startswith(("http://", "https://"))
 
 
-def download(url: str, output: Path | None = None) -> Path:
+def download(url: str, output: Path | None = None,
+             cookies: Path | None = None) -> Path:
     """Download url with yt-dlp. If output is given it names the final file
-    (extension may be adjusted to match the merged container)."""
+    (extension may be adjusted to match the merged container). cookies names a
+    Netscape-format cookies.txt used for age-gated or members-only videos."""
     import yt_dlp
 
     if output is not None:
@@ -33,6 +35,8 @@ def download(url: str, output: Path | None = None) -> Path:
         "noplaylist": True,
         "quiet": False,
     }
+    if cookies is not None:
+        opts["cookiefile"] = str(cookies.expanduser())
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)

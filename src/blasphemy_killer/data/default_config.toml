@@ -48,6 +48,12 @@ language = "en"     # "" = auto-detect
 beam_size = 5
 cpu_threads = 0     # 0 = auto
 
+[download]
+# Netscape-format cookies.txt handed to yt-dlp for URL downloads (age-gated,
+# members-only, or region-locked videos). Export it from your browser with an
+# extension such as "Get cookies.txt LOCALLY". Overridden by --cookies.
+# cookies = "~/.config/blasphemy-killer/cookies.txt"
+
 [processing]
 extensions = [
     # video
