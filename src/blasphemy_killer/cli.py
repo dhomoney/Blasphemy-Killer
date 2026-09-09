@@ -200,6 +200,8 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
     paths = [Path(a) for a in inputs if not is_url(a)]
     if output and (len(urls) != 1 or paths):
         raise click.UsageError("-o/--output requires exactly one URL and no file arguments")
+    if cookies is not None and not urls:
+        raise click.UsageError("--cookies only applies to URL downloads")
     for path in paths:
         if not path.exists():
             raise click.UsageError(f"no such file or directory: {path}")
