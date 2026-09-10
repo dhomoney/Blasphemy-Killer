@@ -10,3 +10,7 @@ build/
 .*.bk-tmp.*
 cookies.txt
 .bk-e2e.*
+
+# Claude Code local config
+CLAUDE.md
+.claude/
