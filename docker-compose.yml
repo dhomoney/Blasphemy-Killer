@@ -1,0 +1,31 @@
+# Run with:  docker compose run --rm blasphemy-killer -r /media
+#
+# Anything after the service name is passed straight to the CLI, e.g.
+#   docker compose run --rm blasphemy-killer --dry-run /media/movie.mp4
+#   docker compose run --rm blasphemy-killer -m medium /media/movie.mp4
+
+services:
+  blasphemy-killer:
+    image: dhomoney/blasphemy-killer:2.0.0
+    volumes:
+      # Mount the DIRECTORY holding your media, never an individual file:
+      # cleaning writes a temp file alongside the original and renames it over
+      # the top, which a single-file bind mount cannot support.
+      - ./media:/media
+
+      # marker.key lives here. It is what lets already-cleaned files be
+      # skipped on the next pass. Lose it and every file gets re-transcribed
+      # and re-encoded from scratch, so keep this volume around.
+      - bk-config:/config
+
+      # The whisper model (~460 MB for the default "small"), downloaded on
+      # first run and reused after that.
+      - bk-cache:/cache
+    environment:
+      # The uid/gid cleaned files should end up owned by on the host.
+      PUID: "1000"
+      PGID: "1000"
+
+volumes:
+  bk-config:
+  bk-cache:

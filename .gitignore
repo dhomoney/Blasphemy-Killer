@@ -9,3 +9,4 @@ build/
 *.bak
 .*.bk-tmp.*
 cookies.txt
+.bk-e2e.*

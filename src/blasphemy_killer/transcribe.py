@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
 from .match import Word
 
 _model_cache: dict[tuple[str, int], object] = {}
+
+CGROUP_CPU_MAX = Path("/sys/fs/cgroup/cpu.max")
+
+
+def available_cpus() -> int:
+    """CPUs this process may actually use. os.cpu_count() reports the host's
+    total inside a container and ignores --cpus, so check the cgroup v2 quota
+    first; without one, fall back to the affinity-aware count."""
+    try:
+        quota, period = CGROUP_CPU_MAX.read_text().split()
+        if quota != "max":
+            return max(1, math.ceil(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    if hasattr(os, "process_cpu_count"):  # 3.13+, honors CPU affinity
+        return os.process_cpu_count() or 4
+    return os.cpu_count() or 4
 
 
 def _get_model(name: str, cpu_threads: int):
@@ -25,7 +43,7 @@ def transcribe(wav_path: Path, *, model: str, language: str | None,
                cpu_threads: int = 0, beam_size: int = 5) -> list[Word]:
     """Transcribe a mono 16 kHz WAV and return the word stream with timestamps."""
     if cpu_threads <= 0:
-        cpu_threads = min(8, os.cpu_count() or 4)
+        cpu_threads = min(8, available_cpus())
     whisper = _get_model(model, cpu_threads)
 
     segments, _info = whisper.transcribe(

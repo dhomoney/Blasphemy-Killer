@@ -10,47 +10,82 @@ is matched against the transcript, and ffmpeg rewrites the file with the audio
 silenced over each match. The video stream is copied bit-for-bit — only audio
 is re-encoded.
 
-## Requirements
+## Quick start (Docker)
 
-- Python 3.12+
-- ffmpeg / ffprobe on PATH
-- [deno](https://deno.com) on PATH — only needed for downloading URLs.
-  YouTube extraction requires a JavaScript runtime
-  ([yt-dlp EJS](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); without one,
-  yt-dlp warns `No supported JavaScript runtime could be found` and some
-  formats may be missing. Deno is yt-dlp's default runtime and runs the
-  extraction JS fully sandboxed. Install it user-locally with:
-
-  ```bash
-  curl -fsSL https://deno.land/install.sh | sh
-  ```
-
-  or grab the release zip from [denoland/deno](https://github.com/denoland/deno/releases)
-  and put the `deno` binary somewhere on PATH (e.g. `~/.local/bin`).
-
-## Install
+The image bundles ffmpeg, ffprobe, deno and every Python dependency, so Docker
+is the only prerequisite.
 
 ```bash
-uv sync            # or: pip install -e .
+docker run --rm \
+  -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v "$PWD:/media" \
+  -v bk-config:/config \
+  -v bk-cache:/cache \
+  dhomoney/blasphemy-killer:2 --dry-run /media/movie.mp4
 ```
 
-`uv sync` installs the `blasphemy-killer` command into the project's virtual
-environment (`.venv/`), so it isn't on your PATH by default. Run it either
-way:
+That's a mouthful to retype, so it's worth a shell function:
 
 ```bash
-# Option 1: let uv handle the venv (run from the project directory)
-uv run blasphemy-killer --dry-run movie.mp4
+bk() {
+  docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
+    -v "$PWD:/media" -v bk-config:/config -v bk-cache:/cache \
+    dhomoney/blasphemy-killer:2 "$@"
+}
 
-# Option 2: activate the venv, then use the command directly
-source .venv/bin/activate
-blasphemy-killer --dry-run movie.mp4
+bk --dry-run /media/movie.mp4     # audit
+bk /media/movie.mp4               # clean it
+bk -r /media                      # a whole library
 ```
 
-The examples below assume an activated venv; prefix them with `uv run`
-otherwise.
+Or with the bundled `docker-compose.yml`:
+
+```bash
+docker compose run --rm blasphemy-killer -r /media
+```
+
+### The volumes
+
+| Mount | What it holds | If you skip it |
+|---|---|---|
+| `/media` | Your files, bind-mounted from the host | Nothing to process |
+| `/config` | `config.toml` and `marker.key` | **Every file gets re-transcribed on every run** |
+| `/cache` | The whisper model (~460 MB on first run) | Re-downloaded every run |
+
+`/config` deserves the emphasis. `marker.key` is the per-machine secret that
+signs the "already cleaned" tag on each file; without a persistent `/config`
+a fresh key is generated on every `docker run`, no existing tag verifies, and
+your whole library is transcribed and re-encoded again from scratch. Use a
+named volume and leave it alone.
+
+### Three things to get right
+
+- **Mount the directory, not the file.** `-v "$PWD/movie.mp4:/media/movie.mp4"`
+  will not work. Cleaning writes a temp file next to the original and renames it
+  over the top, which a single-file bind mount cannot support. Mount the parent
+  directory.
+- **Set `PUID`/`PGID`** (or `--user "$(id -u):$(id -g)"`) so cleaned files stay
+  owned by you instead of root. The container drops to that uid before it
+  touches any media.
+- **On SELinux hosts** (Fedora, RHEL) append `:z` to the media mount:
+  `-v "$PWD:/media:z"`.
+
+### Other useful flags
+
+```bash
+# Fully offline once the model is cached — no network at all
+docker run --rm --network none ... dhomoney/blasphemy-killer:2 /media/movie.mp4
+
+# Cap CPU use; transcription sizes its thread pool from the cgroup quota
+docker run --rm --cpus 4 ... dhomoney/blasphemy-killer:2 -r /media
+```
+
+`--network none` also disables URL downloads and the first-run model fetch, so
+warm the cache volume once before using it.
 
 ## Usage
+
+Flags are the same whether you run the image or a native install.
 
 ```bash
 # Audit first: see what would be muted, change nothing
@@ -64,9 +99,6 @@ blasphemy-killer -r /media/videos
 
 # Download with yt-dlp, then clean the download
 blasphemy-killer https://youtube.com/watch?v=... -o clean-video.mp4
-
-# Same, but authenticated (age-gated / members-only / region-locked)
-blasphemy-killer --cookies cookies.txt https://youtube.com/watch?v=... -o clean.mp4
 
 # Keep the original as movie.mp4.bak
 blasphemy-killer --keep-backup movie.mp4
@@ -85,7 +117,16 @@ mumbled dialogue), `--pad-ms` (mute padding around each phrase, default 300),
 Videos that need a logged-in session (age-gated, members-only, private, or
 region-locked) download only if yt-dlp gets your cookies. Export them in
 Netscape format — e.g. with the "Get cookies.txt LOCALLY" browser extension —
-and point `--cookies` at the file:
+and point `--cookies` at the file.
+
+With Docker, put the file in the config volume so yt-dlp can also write the
+refreshed cookies back:
+
+```bash
+bk --cookies /config/cookies.txt https://youtube.com/watch?v=... -o /media/clean.mp4
+```
+
+Natively:
 
 ```bash
 blasphemy-killer --cookies ~/cookies.txt https://youtube.com/watch?v=...
@@ -95,19 +136,20 @@ To avoid passing it every time, set it in your config instead:
 
 ```toml
 [download]
-cookies = "~/.config/blasphemy-killer/cookies.txt"
+cookies = "~/cookies.txt"
 ```
 
 `--cookies` overrides the config value. Note that yt-dlp may rewrite the file
 with refreshed cookies after a download, and that the file grants access to
 your logged-in accounts — keep it out of version control (this repo's
-`.gitignore` already excludes `cookies.txt`) and readable only by you
-(`chmod 600`).
+`.gitignore` and `.dockerignore` both exclude `cookies.txt`) and readable only
+by you (`chmod 600`).
 
 ## Configuration
 
 Defaults ship with the package. Override any of them in
-`~/.config/blasphemy-killer/config.toml` or a file passed via `--config`:
+`~/.config/blasphemy-killer/config.toml` — `/config/config.toml` inside the
+image — or in a file passed via `--config`:
 
 ```toml
 [detection]
@@ -128,6 +170,55 @@ hyphenated spellings) and anchored to word boundaries ("c*****" never matches
 inside "christmas"). Note the default list includes the standalone names, so
 reverent uses are muted too — trim the list if you want different behavior.
 
+`BK_CONFIG_DIR` overrides where `config.toml` and `marker.key` live. The image
+sets it to `/config`.
+
+## Running natively
+
+Still fully supported, and the right choice if you'd rather not have the ~1.3 GB
+image around.
+
+### Requirements
+
+- Python 3.12+
+- ffmpeg / ffprobe on PATH
+- [deno](https://deno.com) on PATH — only needed for downloading URLs.
+  YouTube extraction requires a JavaScript runtime
+  ([yt-dlp EJS](https://github.com/yt-dlp/yt-dlp/wiki/EJS)); without one,
+  yt-dlp warns `No supported JavaScript runtime could be found` and some
+  formats may be missing. Deno is yt-dlp's default runtime and runs the
+  extraction JS fully sandboxed. Install it user-locally with:
+
+  ```bash
+  curl -fsSL https://deno.land/install.sh | sh
+  ```
+
+  or grab the release zip from [denoland/deno](https://github.com/denoland/deno/releases)
+  and put the `deno` binary somewhere on PATH (e.g. `~/.local/bin`). node, bun
+  and quickjs also work if you already have one.
+
+### Install
+
+```bash
+uv sync            # or: pip install -e .
+```
+
+`uv sync` installs the `blasphemy-killer` command into the project's virtual
+environment (`.venv/`), so it isn't on your PATH by default. Run it either
+way:
+
+```bash
+# Option 1: let uv handle the venv (run from the project directory)
+uv run blasphemy-killer --dry-run movie.mp4
+
+# Option 2: activate the venv, then use the command directly
+source .venv/bin/activate
+blasphemy-killer --dry-run movie.mp4
+```
+
+First run downloads the whisper model (~460 MB for `small`) to
+`~/.cache/huggingface`.
+
 ## Behavior notes
 
 - **All audio tracks** are muted over the same intervals (alternate mixes and
@@ -137,10 +228,11 @@ reverent uses are muted too — trim the list if you want different behavior.
   too, so they aren't re-transcribed. AVI/TS/WAV containers may not retain the
   tag.
 - The tag is signed (HMAC) with a per-machine key auto-generated at
-  `~/.config/blasphemy-killer/marker.key`, so a hostile file can't arrive
+  `marker.key` in the config directory, so a hostile file can't arrive
   pre-stamped to dodge cleaning. Unverifiable tags — including files stamped
   by older versions or on another machine — are reprocessed once and
-  re-stamped.
+  re-stamped. Moving between a native install and the image counts as another
+  machine unless you copy `marker.key` across.
 - Audio-only files are re-encoded back to their original codec at the original
   bitrate (lossless formats like FLAC and WAV stay lossless).
 - Safety: output is written to a temp file beside the original, checked
@@ -148,5 +240,18 @@ reverent uses are muted too — trim the list if you want different behavior.
   failure the original is untouched.
 - A `<file>.bk.json` sidecar records what was found and muted (`--no-report`
   to skip).
-- First run downloads the whisper model (~460 MB for `small`) to
-  `~/.cache/huggingface`.
+
+## Development
+
+```bash
+uv sync
+uv run pytest
+
+# Real-speech end-to-end tests (need network for gTTS)
+BK_E2E=1 scripts/e2e_speech.sh    # native
+BK_E2E=1 scripts/e2e_docker.sh    # containerized
+```
+
+`scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
+`blasphemy-killer:2.0.0`) and additionally checks host file ownership and
+done-marker persistence across runs.

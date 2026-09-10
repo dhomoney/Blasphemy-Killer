@@ -42,3 +42,13 @@ def test_cookies_from_config(tmp_path: Path):
     override.write_text('[download]\ncookies = "~/cookies.txt"\n')
     cfg = load_config(override)
     assert cfg.cookies == Path.home() / "cookies.txt"
+
+
+def test_config_dir_defaults_to_home(monkeypatch):
+    monkeypatch.delenv("BK_CONFIG_DIR", raising=False)
+    assert config_mod._config_dir() == Path.home() / ".config" / "blasphemy-killer"
+
+
+def test_config_dir_env_override(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("BK_CONFIG_DIR", str(tmp_path / "cfg"))
+    assert config_mod._config_dir() == tmp_path / "cfg"

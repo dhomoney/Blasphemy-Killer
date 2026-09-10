@@ -1,13 +1,17 @@
 [project]
 name = "blasphemy-killer"
-version = "1.2.0"
+version = "2.0.0"
 description = "Scan video files for phrases that take the Lord's name in vain and mute them"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.1.0",
     "click>=8.1",
-    "yt-dlp>=2025.1.1",
+    # 2026.8.19 dropped the android_vr client, whose formats YouTube began
+    # 403ing mid-download without a GVS PO token.
+    "yt-dlp>=2026.8.19",
+    # Solver scripts for YouTube's "n challenge"; needs a JS runtime (deno/node/bun/quickjs).
+    "yt-dlp-ejs>=0.8.0",
 ]
 
 [project.scripts]

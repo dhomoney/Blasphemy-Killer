@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
-USER_CONFIG_PATH = Path.home() / ".config" / "blasphemy-killer" / "config.toml"
+
+def _config_dir() -> Path:
+    """Where the user config and the done-marker key live. BK_CONFIG_DIR
+    overrides the default so a container can point both at a mounted volume."""
+    override = os.environ.get("BK_CONFIG_DIR")
+    return Path(override) if override else Path.home() / ".config" / "blasphemy-killer"
+
+
+CONFIG_DIR = _config_dir()
+USER_CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 
 @dataclass

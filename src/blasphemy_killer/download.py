@@ -13,6 +13,18 @@ def is_url(arg: str) -> bool:
     return arg.startswith(("http://", "https://"))
 
 
+def _js_runtimes() -> dict[str, dict]:
+    """YouTube's "n challenge" needs a JavaScript runtime to solve. yt-dlp only
+    enables deno by default; enable every runtime it knows so an already
+    installed node/bun/quickjs works too. yt-dlp picks the best one present and
+    ignores the rest, so listing an uninstalled runtime costs nothing."""
+    try:
+        from yt_dlp.globals import supported_js_runtimes
+    except ImportError:  # yt-dlp too old to have the option at all
+        return {}
+    return {name: {} for name in supported_js_runtimes.value}
+
+
 def download(url: str, output: Path | None = None,
              cookies: Path | None = None) -> Path:
     """Download url with yt-dlp. If output is given it names the final file
@@ -35,6 +47,8 @@ def download(url: str, output: Path | None = None,
         "noplaylist": True,
         "quiet": False,
     }
+    if runtimes := _js_runtimes():
+        opts["js_runtimes"] = runtimes
     if cookies is not None:
         opts["cookiefile"] = str(cookies.expanduser())
     try:
