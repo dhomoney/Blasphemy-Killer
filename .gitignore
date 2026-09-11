@@ -14,3 +14,4 @@ cookies.txt
 # Claude Code local config
 CLAUDE.md
 .claude/
+.bk-web/

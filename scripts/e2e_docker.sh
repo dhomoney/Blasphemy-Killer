@@ -14,7 +14,7 @@ if [[ "${BK_E2E:-}" != "1" ]]; then
     exit 0
 fi
 
-IMAGE=${BK_IMAGE:-blasphemy-killer:2.0.0}
+IMAGE=${BK_IMAGE:-blasphemy-killer:2.1.0}
 MODEL=${BK_MODEL:-small}
 CACHE_VOLUME=${BK_CACHE_VOLUME:-bk-e2e-cache}   # persists so the model downloads once
 
@@ -24,7 +24,7 @@ CACHE_VOLUME=${BK_CACHE_VOLUME:-bk-e2e-cache}   # persists so the model download
 cd "$(dirname "$0")/.."
 work=$(mktemp -d "${BK_WORK_BASE:-$PWD}/.bk-e2e.XXXXXX")
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/media" "$work/config" "$work/config2"
+mkdir -p "$work/media" "$work/config" "$work/config2" "$work/config3"
 
 docker volume create "$CACHE_VOLUME" >/dev/null
 
@@ -57,6 +57,10 @@ ff ffmpeg -y -nostdin -v error \
     -map 0:v -map 1:a -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -shortest \
     media/speech_video.mp4
 
+# Pristine copy for the web-UI phase further down: the CLI phase below mutes
+# speech_video.mp4 in place, and a cleaned file yields zero matches.
+cp "$work/media/speech_video.mp4" "$work/media/web_clip.mp4"
+
 echo "== dry run"
 before=$(ff ffprobe -v error -show_entries format=size -of csv=p=0 media/speech_video.mp4)
 bk "$work/config" --dry-run /media/speech_video.mp4
@@ -80,7 +84,7 @@ report = json.load(open(f"{work}/media/speech_video.mp4.bk.json"))
 for start, end in report["muted_intervals"]:
     proc = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "ffmpeg", "-v", f"{work}:/w", "-w", "/w",
-         subprocess.os.environ.get("BK_IMAGE", "blasphemy-killer:2.0.0"),
+         subprocess.os.environ.get("BK_IMAGE", "blasphemy-killer:2.1.0"),
          "-nostdin", "-ss", str(start + 0.05), "-to", str(end - 0.05),
          "-i", "media/speech_video.mp4", "-af", "volumedetect", "-f", "null", "-"],
         capture_output=True, text=True)
@@ -109,5 +113,79 @@ out=$(bk "$work/config2" --dry-run /media/speech_video.mp4)
 grep -q "not signed by this machine" <<<"$out" \
     || { echo "FAIL: expected an unsigned-marker reprocess with a fresh config volume"; echo "$out"; exit 1; }
 echo "  fresh config volume reprocesses, as documented"
+
+# --- web UI ----------------------------------------------------------------
+# Same image, same volumes; `serve` is the only difference. Driven over HTTP
+# rather than a browser so this stays runnable in CI.
+
+echo "== web UI: starting container"
+port=${BK_WEB_TEST_PORT:-18080}
+name="bk-e2e-web-$$"
+docker rm -f "$name" >/dev/null 2>&1 || true
+docker run -d --name "$name" \
+    -e PUID="$(id -u)" -e PGID="$(id -g)" \
+    -p "127.0.0.1:${port}:8080" \
+    -v "$work/media:/media" \
+    -v "$work/config3:/config" \
+    -v "$CACHE_VOLUME:/cache" \
+    "$IMAGE" serve >/dev/null
+trap 'docker rm -f "$name" >/dev/null 2>&1; rm -rf "$work"' EXIT
+
+for _ in $(seq 1 30); do
+    curl -sf --max-time 2 "http://127.0.0.1:${port}/api/config" >/dev/null 2>&1 && break
+    sleep 1
+done
+
+echo "== web UI: assets load (no CDN, so this must work offline too)"
+for path in / /static/app.js /static/style.css; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}${path}")
+    [[ "$code" == "200" ]] || { echo "FAIL: $path returned $code"; exit 1; }
+    echo "  $path -> 200"
+done
+
+echo "== web UI: refuses to escape the media root"
+for bad in '../../etc' '/etc' '..'; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' \
+        "http://127.0.0.1:${port}/api/browse?path=$(printf '%s' "$bad" | jq -sRr @uri 2>/dev/null || echo "$bad")")
+    [[ "$code" == "400" ]] || { echo "FAIL: traversal '$bad' returned $code, expected 400"; exit 1; }
+done
+echo "  traversal attempts rejected"
+
+echo "== web UI: browse lists the media directory"
+curl -s "http://127.0.0.1:${port}/api/browse" \
+    | grep -q 'speech_video.mp4' \
+    || { echo "FAIL: browse did not list the fixture"; exit 1; }
+echo "  fixture listed"
+
+echo "== web UI: runs a job end to end"
+job=$(curl -s -X POST "http://127.0.0.1:${port}/api/jobs" \
+        -H 'Content-Type: application/json' \
+        -d '{"path":"web_clip.mp4","dry_run":false,"force":true}' \
+      | python3 -c "import json,sys; print(json.load(sys.stdin)['job']['id'])")
+for _ in $(seq 1 120); do
+    state=$(curl -s "http://127.0.0.1:${port}/api/jobs" | python3 -c "
+import json,sys
+j=[x for x in json.load(sys.stdin)['jobs'] if x['id']=='$job'][0]
+print(j['state'])")
+    [[ "$state" == "done" || "$state" == "failed" ]] && break
+    sleep 1
+done
+[[ "$state" == "done" ]] || { echo "FAIL: web job ended as $state"; exit 1; }
+
+curl -s "http://127.0.0.1:${port}/api/jobs" | python3 -c "
+import json,sys
+j=[x for x in json.load(sys.stdin)['jobs'] if x['id']=='$job'][0]
+assert len(j['matches']) >= 3, f\"expected >=3 matches, got {len(j['matches'])}\"
+assert j['muted'] >= 1, 'nothing was muted'
+assert j['progress'] == 1.0, f\"progress stalled at {j['progress']}\"
+print(f\"  {len(j['matches'])} matches, {j['muted']} interval(s) muted\")"
+
+owner=$(stat -c '%u:%g' "$work/media/web_clip.mp4")
+[[ "$owner" == "$(id -u):$(id -g)" ]] \
+    || { echo "FAIL: web-cleaned file owned by $owner"; exit 1; }
+echo "  cleaned file owned by $owner (not root)"
+
+docker rm -f "$name" >/dev/null 2>&1
+trap 'rm -rf "$work"' EXIT
 
 echo "DOCKER E2E PASSED"

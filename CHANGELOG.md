@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.1.0
+
+A web UI, served by the same image. `docker compose up web`, then browse the
+library, queue files, and watch progress instead of composing `docker run`
+lines and staring at a silent cursor.
+
+### Added
+
+- **Web UI** at `docker run ... serve` (or `docker compose up web`): browse the
+  mounted media directory, see which files already carry the done-marker, queue
+  files, and watch transcription progress and matches stream in live over SSE.
+  Dry run is the default and cleaning for real takes an explicit confirmation.
+  Running jobs can be cancelled.
+- `blasphemy-killer-serve` console script for running the UI natively.
+- `pipeline.process()`, the per-file pipeline as an event stream. The CLI and
+  the web UI are both consumers of it; terminal formatting no longer lives in
+  the middle of the pipeline.
+- Transcription reports progress. `transcribe()` takes `on_progress` and
+  `check_cancelled` callbacks, which is what makes both the progress bar and
+  cancellation possible — previously the slowest stage was a black box.
+- `scripts/e2e_docker.sh` now covers the web UI as well as the CLI.
+
+### Notes
+
+- The UI has **no authentication** and rewrites media in place. It is published
+  on `127.0.0.1` by the compose file for that reason; exposing it on `0.0.0.0`
+  gives everyone on your network the ability to overwrite your library.
+- The server keeps the whisper model loaded between jobs, so after the first
+  file each subsequent one skips the ~10 s model load the CLI pays every run.
+- Jobs are held in memory: restarting the container clears the queue.
+- CLI output is unchanged from 2.0.0.
+
 ## 2.0.0
 
 Docker is now the primary way to install and run blasphemy-killer. Running

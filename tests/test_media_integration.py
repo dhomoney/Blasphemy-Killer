@@ -143,13 +143,13 @@ def test_display_strips_control_chars():
 
 
 def test_write_report_refuses_symlink(tmp_path: Path):
-    from blasphemy_killer.cli import _write_report
+    from blasphemy_killer.pipeline import write_report
     victim = tmp_path / "victim.txt"
     victim.write_text("precious")
     link = tmp_path / "movie.mp4.bk.json"
     link.symlink_to(victim)
     with pytest.raises(OSError):
-        _write_report(link, {"a": 1})
+        write_report(link, {"a": 1})
     assert victim.read_text() == "precious"
 
 

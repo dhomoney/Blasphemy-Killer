@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blasphemy-killer</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header>
+  <h1>blasphemy-killer</h1>
+  <span class="meta" id="meta"></span>
+  <span class="conn" id="conn" title="event stream">connecting…</span>
+</header>
+
+<main>
+  <section class="panel" id="browser">
+    <div class="panel-head">
+      <h2>Library</h2>
+      <nav id="crumbs"></nav>
+    </div>
+
+    <div class="toolbar">
+      <label class="check">
+        <input type="checkbox" id="dry-run" checked>
+        Dry run <span class="hint">(report only, change nothing)</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="force">
+        Force <span class="hint">(redo already-cleaned files)</span>
+      </label>
+      <button id="queue-selected" disabled>Queue selected</button>
+    </div>
+
+    <table id="listing">
+      <thead>
+        <tr>
+          <th class="col-check"><input type="checkbox" id="select-all" title="Select all"></th>
+          <th>Name</th>
+          <th class="col-status">Status</th>
+          <th class="col-size">Size</th>
+        </tr>
+      </thead>
+      <tbody id="entries"></tbody>
+    </table>
+    <p class="empty" id="empty" hidden>Nothing here.</p>
+  </section>
+
+  <section class="panel" id="queue-panel">
+    <div class="panel-head"><h2>Queue</h2></div>
+    <ul id="jobs"></ul>
+    <p class="empty" id="no-jobs">No jobs yet. Pick a file and queue it.</p>
+  </section>
+</main>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h3>Clean these files in place?</h3>
+    <p>
+      The audio will be muted over every match and the original file
+      <strong>overwritten</strong>. This is not a dry run.
+    </p>
+    <p class="files" id="confirm-files"></p>
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button value="go" class="danger">Clean them</button>
+    </menu>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

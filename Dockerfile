@@ -44,7 +44,16 @@ ENV PATH=/app/.venv/bin:$PATH \
     BK_CONFIG_DIR=/config \
     HF_HOME=/cache \
     HOME=/config \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    BK_MEDIA_ROOT=/media \
+    BK_WEB_PORT=8080 \
+    BK_WEB_HOST=0.0.0.0
+
+# 0.0.0.0 above is the *container's* interface, not an exposure decision: a
+# container's loopback is its own, so a server bound to 127.0.0.1 inside would
+# be unreachable through any published port. Restrict access on the host side
+# by publishing to 127.0.0.1:8080:8080 (which is what compose does).
+EXPOSE 8080
 
 # /config holds config.toml and marker.key — the per-machine key that makes
 # already-cleaned files skippable. Keep it on a persistent volume or every run

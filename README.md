@@ -52,6 +52,8 @@ docker compose run --rm blasphemy-killer -r /media
 | `/config` | `config.toml` and `marker.key` | **Every file gets re-transcribed on every run** |
 | `/cache` | The whisper model (~460 MB on first run) | Re-downloaded every run |
 
+The web UI uses exactly the same three volumes.
+
 `/config` deserves the emphasis. `marker.key` is the per-machine secret that
 signs the "already cleaned" tag on each file; without a persistent `/config`
 a fresh key is generated on every `docker run`, no existing tag verifies, and
@@ -82,6 +84,50 @@ docker run --rm --cpus 4 ... dhomoney/blasphemy-killer:2 -r /media
 
 `--network none` also disables URL downloads and the first-run model fetch, so
 warm the cache volume once before using it.
+
+## Web UI
+
+If you would rather not compose `docker run` lines, the same image serves a
+small web UI: browse your library, see what has already been cleaned, queue
+files, and watch progress and matches arrive live.
+
+```bash
+docker compose up web        # then open http://127.0.0.1:8080
+```
+
+or directly:
+
+```bash
+docker run --rm \
+  -e PUID=$(id -u) -e PGID=$(id -g) \
+  -p 127.0.0.1:8080:8080 \
+  -v "$PWD:/media" -v bk-config:/config -v bk-cache:/cache \
+  dhomoney/blasphemy-killer:2 serve
+```
+
+Dry run is the default; cleaning files for real takes an explicit confirmation.
+Transcription shows a live progress bar, and a running job can be cancelled
+(it stops at the next transcription checkpoint, usually a second or two).
+
+### It has no authentication — keep it on your own machine
+
+Publishing as `127.0.0.1:8080:8080` (what the compose file does) means only
+this machine can reach it. Publishing as `-p 8080:8080` means `0.0.0.0`, which
+hands **everyone on your network** the ability to overwrite your media library.
+There is no login. For remote access, put an authenticating reverse proxy in
+front of it.
+
+One wrinkle worth knowing: the server binds `0.0.0.0` *inside* the container,
+and that is not an exposure decision. A container's loopback is its own, so a
+server bound to `127.0.0.1` in there would be unreachable through any published
+port. The host-side publish address is what actually limits access.
+
+Running natively, `--host` defaults to `127.0.0.1`, which is IPv4-only — open
+the `http://127.0.0.1:8080` URL it prints rather than `localhost`, which some
+browsers resolve to `::1` first and which would refuse the connection.
+
+The UI covers browsing and queueing. The phrase list and settings stay in
+`config.toml` — see [Configuration](#configuration).
 
 ## Usage
 
@@ -219,6 +265,12 @@ blasphemy-killer --dry-run movie.mp4
 First run downloads the whisper model (~460 MB for `small`) to
 `~/.cache/huggingface`.
 
+The web UI works natively too:
+
+```bash
+uv run blasphemy-killer-serve --media-root ~/Videos
+```
+
 ## Behavior notes
 
 - **All audio tracks** are muted over the same intervals (alternate mixes and
@@ -253,5 +305,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.0.0`) and additionally checks host file ownership and
-done-marker persistence across runs.
+`blasphemy-killer:2.1.0`) and additionally checks host file ownership,
+done-marker persistence across runs, and the web UI.

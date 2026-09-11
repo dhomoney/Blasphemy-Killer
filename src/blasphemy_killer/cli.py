@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import sys
 import tempfile
-import time
-from dataclasses import asdict
 from pathlib import Path
 
 import click
+
+from . import __version__
+from .config import Config, load_config
+from .download import DownloadError, download, is_url
+from .media import MediaError, VerifyError
+from .pipeline import (
+    Finished, MarkerUnsigned, MatchFound, MatchingComplete, Skipped, process,
+)
+
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -28,24 +33,6 @@ def _mask(text: str) -> str:
     """Obscure a matched blasphemy for display: keep each word's first
     character and star out the rest ("Jesus Christ" -> "J**** C*****")."""
     return _MASK_RE.sub("*", text)
-
-
-def _write_report(report_path: Path, report: dict) -> None:
-    """Write the JSON sidecar, refusing to follow a pre-placed symlink."""
-    fd = os.open(
-        report_path,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
-        0o644,
-    )
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(report, indent=2))
-
-from . import __version__
-from .config import Config, load_config
-from .download import DownloadError, download, is_url
-from .match import build_intervals, find_matches
-from .media import MediaError, VerifyError, atomic_replace, extract_wav, probe, verify_output
-from .mute import marker_valid, render, stamp_only
 
 
 def _timestamp(seconds: float) -> str:
@@ -72,79 +59,43 @@ def _collect_files(paths: list[Path], extensions: list[str], recursive: bool) ->
 
 def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
                  verbose: bool, tmp_dir: Path) -> dict:
-    """Run the full pipeline on one file. Returns a result dict for the summary."""
-    started = time.monotonic()
-    info = probe(path)
+    """Run the full pipeline on one file, echoing progress to the terminal.
 
-    if info.marker and not force:
-        if marker_valid(info):
-            click.echo(f"  skipped (already processed: {_display(info.marker)})")
-            return {"status": "skipped"}
-        click.echo("  done-marker present but not signed by this machine — reprocessing")
-    stream = info.transcription_stream
-    if stream is None:
-        click.echo("  skipped (no audio streams)")
+    All the work lives in pipeline.process; this only turns its events into
+    the lines the CLI has always printed.
+    """
+    def echo(event) -> None:
+        match event:
+            case Skipped("already-processed", marker):
+                click.echo(f"  skipped (already processed: {_display(marker)})")
+            case Skipped("no-audio", _):
+                click.echo("  skipped (no audio streams)")
+            case MarkerUnsigned():
+                click.echo("  done-marker present but not signed by this machine — reprocessing")
+            case MatchFound(m):
+                click.echo(
+                    f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] "
+                    f"\"{_display(_mask(m.text))}\"  ({_mask(m.phrase)})"
+                )
+            case MatchingComplete(0):
+                click.echo("  no matches found")
+            case Finished(result) if result.status == "processed":
+                click.echo(
+                    f"  muted {len(result.intervals)} interval(s) in {result.elapsed:.0f}s"
+                )
+
+    result = process(
+        path, cfg, dry_run=dry_run, force=force, tmp_dir=tmp_dir, on_event=echo,
+    )
+    if result.status == "skipped":
         return {"status": "skipped"}
-
-    wav = tmp_dir / "audio.wav"
-    extract_wav(path, stream, wav)
-
-    from .transcribe import transcribe  # deferred: heavy import, not needed for --help etc.
-    words = transcribe(
-        wav, model=cfg.model, language=cfg.language or None,
-        cpu_threads=cfg.cpu_threads, beam_size=cfg.beam_size,
-    )
-    wav.unlink(missing_ok=True)
-
-    matches = find_matches(words, cfg.phrases)
-    intervals = build_intervals(
-        matches, pad_before=cfg.pad_before, pad_after=cfg.pad_after,
-        clamp_end=info.duration or None,
-    )
-
-    for m in matches:
-        click.echo(f"  [{_timestamp(m.start)} - {_timestamp(m.end)}] \"{_display(_mask(m.text))}\"  ({_mask(m.phrase)})")
-    if not matches:
-        click.echo("  no matches found")
-
-    if dry_run:
-        return {"status": "dry-run", "matches": len(matches)}
-
-    # Random name, created 0600 with O_EXCL: not guessable or symlink-plantable
-    # by another writer in a shared directory. Still matches .gitignore's
-    # `.*.bk-tmp.*` pattern.
-    fd, out_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.stem}.bk-tmp.", suffix=path.suffix
-    )
-    os.close(fd)
-    out_tmp = Path(out_name)
-    try:
-        if intervals:
-            render(info, intervals, out_tmp, tmp_dir / "filter.txt")
-        else:
-            stamp_only(info, out_tmp)
-        verify_output(info, out_tmp)
-        atomic_replace(out_tmp, path, keep_backup=cfg.keep_backup and bool(intervals))
-    except (MediaError, OSError):
-        out_tmp.unlink(missing_ok=True)
-        raise
-
-    if cfg.write_report:
-        report = {
-            "tool": "blasphemy-killer",
-            "version": __version__,
-            "file": str(path),
-            "model": cfg.model,
-            "matches": [asdict(m) for m in matches],
-            "muted_intervals": intervals,
-            "duration": info.duration,
-            "elapsed_seconds": round(time.monotonic() - started, 1),
-        }
-        _write_report(path.with_name(path.name + ".bk.json"), report)
-
-    elapsed = time.monotonic() - started
-    click.echo(f"  muted {len(intervals)} interval(s) in {elapsed:.0f}s")
-    return {"status": "processed", "matches": len(matches), "intervals": len(intervals)}
+    if result.status == "dry-run":
+        return {"status": "dry-run", "matches": len(result.matches)}
+    return {
+        "status": "processed",
+        "matches": len(result.matches),
+        "intervals": len(result.intervals),
+    }
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})

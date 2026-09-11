@@ -22,3 +22,4 @@ media/
 CLAUDE.md
 docker-compose.yml
 .bk-e2e.*
+.bk-web/

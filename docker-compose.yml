@@ -1,4 +1,5 @@
-# Run with:  docker compose run --rm blasphemy-killer -r /media
+# Web UI:    docker compose up web          ->  http://127.0.0.1:8080
+# One-shot:  docker compose run --rm blasphemy-killer -r /media
 #
 # Anything after the service name is passed straight to the CLI, e.g.
 #   docker compose run --rm blasphemy-killer --dry-run /media/movie.mp4
@@ -6,7 +7,7 @@
 
 services:
   blasphemy-killer:
-    image: dhomoney/blasphemy-killer:2.0.0
+    image: dhomoney/blasphemy-killer:2.1.0
     volumes:
       # Mount the DIRECTORY holding your media, never an individual file:
       # cleaning writes a temp file alongside the original and renames it over
@@ -25,6 +26,30 @@ services:
       # The uid/gid cleaned files should end up owned by on the host.
       PUID: "1000"
       PGID: "1000"
+
+  # The web UI. Same image and same volumes; `serve` is what switches it on.
+  web:
+    image: dhomoney/blasphemy-killer:2.1.0
+    command: ["serve"]
+    ports:
+      # Published to 127.0.0.1 deliberately: the UI has NO authentication and
+      # rewrites files in place. Changing this to "8080:8080" means 0.0.0.0,
+      # which hands everyone on your network the ability to overwrite your
+      # media library. Put a reverse proxy with auth in front for remote access.
+      #
+      # (The server binds 0.0.0.0 *inside* the container, which is not an
+      # exposure decision: a container's loopback is its own, so binding
+      # 127.0.0.1 in there would make the port unreachable from the host.
+      # The host-side address above is what actually limits access.)
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./media:/media
+      - bk-config:/config
+      - bk-cache:/cache
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+    restart: unless-stopped
 
 volumes:
   bk-config:

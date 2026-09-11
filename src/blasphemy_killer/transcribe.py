@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
+from typing import Callable
 
 from .match import Word
 
@@ -40,13 +41,22 @@ def _get_model(name: str, cpu_threads: int):
 
 
 def transcribe(wav_path: Path, *, model: str, language: str | None,
-               cpu_threads: int = 0, beam_size: int = 5) -> list[Word]:
-    """Transcribe a mono 16 kHz WAV and return the word stream with timestamps."""
+               cpu_threads: int = 0, beam_size: int = 5,
+               on_progress: Callable[[float], None] | None = None,
+               check_cancelled: Callable[[], None] | None = None) -> list[Word]:
+    """Transcribe a mono 16 kHz WAV and return the word stream with timestamps.
+
+    on_progress, if given, receives the fraction of the media transcribed so
+    far. check_cancelled is called once per segment and may raise to abort;
+    this is the only stage long enough to be worth interrupting.
+    """
     if cpu_threads <= 0:
         cpu_threads = min(8, available_cpus())
     whisper = _get_model(model, cpu_threads)
 
-    segments, _info = whisper.transcribe(
+    # faster-whisper returns a generator: segments are produced as the audio is
+    # consumed, which is what makes progress reporting possible at all.
+    segments, info = whisper.transcribe(
         str(wav_path),
         word_timestamps=True,
         vad_filter=True,
@@ -54,8 +64,15 @@ def transcribe(wav_path: Path, *, model: str, language: str | None,
         language=language or None,
         beam_size=beam_size,
     )
+    total = getattr(info, "duration", 0.0) or 0.0
     words: list[Word] = []
     for segment in segments:
+        if check_cancelled is not None:
+            check_cancelled()
         for w in segment.words or []:
             words.append(Word(text=w.word, start=w.start, end=w.end))
+        if on_progress is not None and total > 0:
+            on_progress(min(1.0, segment.end / total))
+    if on_progress is not None:
+        on_progress(1.0)
     return words
