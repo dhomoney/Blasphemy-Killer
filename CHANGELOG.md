@@ -22,6 +22,18 @@ dialog — was a second decision nobody was asking to make.
   URL you just pasted is not one of them. Nothing is cleaned if the download
   failed or was cancelled.
 
+- **A promised clean survives a restart.** Only the automatic ones: a job you
+  queued from the listing is a live decision you can make again, but one queued
+  on your behalf while you were somewhere else would otherwise vanish in a
+  restart, leaving the file looking merely "not scanned" with nothing anywhere
+  saying a promise had been dropped. It is written to the config volume when it
+  is made — atomically, flushed to the disk first, validated when it is read
+  back rather than trusted because it exists, all the way this release's
+  predecessor learned to do it — and re-queued at startup. Entries whose file
+  has moved, or whose path does not resolve inside the media root, are dropped.
+  Downloads are not resumed; a crash mid-download leaves a `.part` that yt-dlp
+  owns.
+
 - **`POST /api/downloads` takes `clean` (default `true`)**, and download jobs
   carry `clean`; the job it queues carries `source`, the id of the download it
   came from.
@@ -31,6 +43,30 @@ dialog — was a second decision nobody was asking to make.
 - **A "Clean it when it lands" checkbox** beside the URL bar, ticked by
   default. Untick it for the old behaviour — download only — and queue the
   file from the listing whenever you like.
+
+### Fixed
+
+- **A promised clean can no longer be swallowed by a job already queued.** The
+  queue folds a repeat request for a path into whatever is already waiting,
+  which is right for a person clicking twice and wrong for a promise: if a dry
+  run happened to be queued for the same name, the file was never cleaned and
+  the UI went on saying "cleaning next" forever. Only an identical clean still
+  waiting is adopted now, and it is stamped with the download it belongs to.
+
+- **Cancelling a clean no longer leaves an invisible temp file behind.**
+  `Cancelled` is not an error, so it sailed past the clause that cleans up
+  after a failure — and the leftover is a dot-file, which the library listing
+  filters out, so it sat in the media directory forever. Found while going over
+  the cancel paths, which auto-queued cleans make a routine thing to use.
+
+- **Cancelling during rendering now actually cancels.** Rendering is the long
+  pass and had no checkpoint after it, so a cancel raised while ffmpeg worked
+  was never seen: the UI said "cancelling…" and the file was replaced anyway.
+  There is now a last check immediately before the swap, which is the last
+  moment stopping is worth anything.
+
+- **A worker publishing an event into a closed event loop no longer takes the
+  worker thread down** during shutdown.
 
 The CLI is unchanged: `blasphemy-killer <url>` has always downloaded and then
 cleaned, and this brings the web UI in line with it.

@@ -57,9 +57,13 @@ ff ffmpeg -y -nostdin -v error \
     -map 0:v -map 1:a -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -shortest \
     media/speech_video.mp4
 
-# Pristine copy for the web-UI phase further down: the CLI phase below mutes
-# speech_video.mp4 in place, and a cleaned file yields zero matches.
+# Pristine copies for the phases further down: the CLI phase below mutes
+# speech_video.mp4 in place, and a cleaned file yields zero matches. The second
+# one is served over HTTP rather than placed in the library -- the download
+# phase has to fetch it the way a pasted URL would.
 cp "$work/media/speech_video.mp4" "$work/media/web_clip.mp4"
+mkdir -p "$work/serve"
+cp "$work/media/speech_video.mp4" "$work/serve/sermon.mp4"
 
 echo "== dry run"
 before=$(ff ffprobe -v error -show_entries format=size -of csv=p=0 media/speech_video.mp4)
@@ -121,15 +125,26 @@ echo "  fresh config volume reprocesses, as documented"
 echo "== web UI: starting container"
 port=${BK_WEB_TEST_PORT:-18080}
 name="bk-e2e-web-$$"
-docker rm -f "$name" >/dev/null 2>&1 || true
-docker run -d --name "$name" \
+files="bk-e2e-files-$$"
+net="bk-e2e-net-$$"
+docker rm -f "$name" "$files" >/dev/null 2>&1 || true
+docker network rm "$net" >/dev/null 2>&1 || true
+# A user-defined network, so the download phase below can reach the file server
+# by name. The published port still only listens on the host's loopback.
+docker network create "$net" >/dev/null
+cleanup() {
+    docker rm -f "$name" "$files" >/dev/null 2>&1 || true
+    docker network rm "$net" >/dev/null 2>&1 || true
+    rm -rf "$work"
+}
+trap cleanup EXIT
+docker run -d --name "$name" --network "$net" \
     -e PUID="$(id -u)" -e PGID="$(id -g)" \
     -p "127.0.0.1:${port}:8080" \
     -v "$work/media:/media" \
     -v "$work/config3:/config" \
     -v "$CACHE_VOLUME:/cache" \
     "$IMAGE" serve >/dev/null
-trap 'docker rm -f "$name" >/dev/null 2>&1; rm -rf "$work"' EXIT
 
 for _ in $(seq 1 30); do
     curl -sf --max-time 2 "http://127.0.0.1:${port}/api/config" >/dev/null 2>&1 && break
@@ -185,7 +200,61 @@ owner=$(stat -c '%u:%g' "$work/media/web_clip.mp4")
     || { echo "FAIL: web-cleaned file owned by $owner"; exit 1; }
 echo "  cleaned file owned by $owner (not root)"
 
-docker rm -f "$name" >/dev/null 2>&1
-trap 'rm -rf "$work"' EXIT
+# --- download, then the clean it promises ----------------------------------
+# The whole point of pasting a URL is to end up with a cleaned file, so the
+# release gate has to see both halves happen off one request. Served from a
+# sidecar on the private network rather than the internet: this has to pass
+# offline, and it must not depend on some video still existing on YouTube.
+
+echo "== download: starting the file server"
+docker run -d --name "$files" --network "$net" \
+    -v "$work/serve:/srv:ro" --entrypoint python \
+    "$IMAGE" -m http.server 8000 --directory /srv >/dev/null
+
+for _ in $(seq 1 30); do
+    docker run --rm --network "$net" --entrypoint python "$IMAGE" -c "
+import sys, urllib.request
+try:
+    urllib.request.urlopen('http://${files}:8000/sermon.mp4', timeout=2).read(1)
+except Exception:
+    sys.exit(1)" >/dev/null 2>&1 && break
+    sleep 1
+done
+
+echo "== download: a pasted URL cleans itself"
+# No "clean" in the body: the default is what is under test.
+dl=$(curl -s -X POST "http://127.0.0.1:${port}/api/downloads" \
+        -H 'Content-Type: application/json' \
+        -d "{\"url\":\"http://${files}:8000/sermon.mp4\"}" \
+      | python3 -c "import json,sys; print(json.load(sys.stdin)['job']['id'])")
+
+# The clean is a separate job, created by the worker once the download names
+# its file, and found by the download id it carries.
+for _ in $(seq 1 180); do
+    read -r state landed <<<"$(curl -s "http://127.0.0.1:${port}/api/jobs" | python3 -c "
+import json,sys
+jobs=json.load(sys.stdin)['jobs']
+follow=[j for j in jobs if j.get('source') == '$dl']
+print(follow[0]['state'], follow[0]['path']) if follow else print('pending', '')")"
+    [[ "$state" == "done" || "$state" == "failed" || "$state" == "cancelled" ]] && break
+    sleep 1
+done
+[[ "$state" == "done" ]] || { echo "FAIL: the promised clean ended as $state"; exit 1; }
+
+curl -s "http://127.0.0.1:${port}/api/jobs" | python3 -c "
+import json,sys
+jobs=json.load(sys.stdin)['jobs']
+dl=[j for j in jobs if j['id']=='$dl'][0]
+clean=[j for j in jobs if j.get('source')=='$dl'][0]
+assert dl['kind'] == 'download' and dl['clean'] is True, dl
+assert clean['dry_run'] is False, 'the promised clean must not be a dry run'
+assert len(clean['matches']) >= 3, f\"expected >=3 matches, got {len(clean['matches'])}\"
+assert clean['muted'] >= 1, 'nothing was muted'
+print(f\"  downloaded and cleaned: {len(clean['matches'])} matches, {clean['muted']} interval(s) muted\")"
+
+owner=$(stat -c '%u:%g' "$work/media/$landed")
+[[ "$owner" == "$(id -u):$(id -g)" ]] \
+    || { echo "FAIL: downloaded file owned by $owner"; exit 1; }
+echo "  '$landed' owned by $owner (not root)"
 
 echo "DOCKER E2E PASSED"

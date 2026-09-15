@@ -13,7 +13,10 @@ through arriving.
 A download that lands queues its own clean behind it. Pasting a URL is a
 request for a cleaned file, not for a file plus a second decision, so the
 follow-up job is created here -- by the worker that knows the name yt-dlp
-finally gave it -- rather than waiting for a browser to notice and ask.
+finally gave it -- rather than waiting for a browser to notice and ask. That
+promise outlives the process: it is written to the config volume when it is
+made and re-queued at startup, because a restart in the gap would otherwise
+drop it silently (see pending.py).
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ from ..pipeline import (
     Cancelled, Finished, MarkerUnsigned, MatchFound, MatchingComplete,
     Progress, Skipped, StageChanged, process,
 )
+from . import pending
+from .library import PathDenied, resolve_within
 
 QUEUED, RUNNING, DONE, FAILED, CANCELLED = "queued", "running", "done", "failed", "cancelled"
 PROCESS, DOWNLOAD = "process", "download"
@@ -93,13 +98,50 @@ class JobQueue:
                source: str | None = None) -> Job:
         """Enqueue a file. A path already queued or running is not queued twice."""
         with self._lock:
-            for existing in self._jobs.values():
-                if existing.path == rel_path and existing.state in (QUEUED, RUNNING):
-                    return existing
+            existing = self._active(rel_path)
+            if existing is not None:
+                return existing
             job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run,
                       force=force, source=source)
             self._jobs[job.id] = job
         self._pending.put(job)
+        self._publish(job)
+        return job
+
+    def submit_clean(self, rel_path: str, *, source: str | None = None,
+                     force: bool = False) -> Job:
+        """Queue a clean that was promised rather than asked for.
+
+        submit() folds a second request for the same path into whatever is
+        already queued, which is right for a person clicking twice and wrong
+        here: a dry run leaves the file uncleaned, and a clean that is already
+        running may have started before this file replaced the one it read.
+        Either way the promise would be quietly dropped, and the UI would go on
+        saying "cleaning next" forever because no follow-up job ever appears.
+
+        So only an identical clean still waiting is adopted -- stamped with the
+        download it now also belongs to -- and anything else gets a job of its
+        own. A redundant clean is cheap: process() skips on a valid marker.
+        """
+        pending.record(rel_path, force=force)
+        with self._lock:
+            existing = self._active(rel_path)
+            adopted = (
+                existing is not None
+                and existing.state == QUEUED
+                and not existing.dry_run
+                and existing.force == force
+            )
+            if adopted:
+                job = existing
+                if job.source is None:
+                    job.source = source
+            else:
+                job = Job(id=str(next(self._ids)), path=rel_path, dry_run=False,
+                          force=force, source=source)
+                self._jobs[job.id] = job
+        if not adopted:
+            self._pending.put(job)
         self._publish(job)
         return job
 
@@ -120,6 +162,27 @@ class JobQueue:
         self._pending.put(job)
         self._publish(job)
         return job
+
+    def restore_pending(self) -> list[Job]:
+        """Re-queue the cleans a previous run promised and did not finish.
+
+        Called once the server is up. An entry whose file has since been moved
+        away, or whose path no longer resolves inside the media root, is
+        dropped rather than trusted -- this file lives in a volume a person can
+        edit.
+        """
+        restored: list[Job] = []
+        for entry in pending.load():
+            try:
+                target = resolve_within(self.root, entry["path"])
+            except PathDenied:
+                pending.clear(entry["path"])
+                continue
+            if not target.is_file():
+                pending.clear(entry["path"])
+                continue
+            restored.append(self.submit_clean(entry["path"], force=entry["force"]))
+        return restored
 
     def cancel(self, job_id: str) -> Job | None:
         with self._lock:
@@ -147,6 +210,14 @@ class JobQueue:
         self._pending.put(None)  # type: ignore[arg-type]
 
     # --- worker -------------------------------------------------------------
+
+    def _active(self, rel_path: str) -> Job | None:
+        """The queued or running job for this path, if there is one. Callers
+        hold the lock."""
+        for existing in self._jobs.values():
+            if existing.path == rel_path and existing.state in (QUEUED, RUNNING):
+                return existing
+        return None
 
     def _publish(self, job: Job) -> None:
         self._broadcast({"type": "job", "job": job.snapshot()})
@@ -216,6 +287,9 @@ class JobQueue:
             job.elapsed = job.elapsed or (time.monotonic() - started)
             self._current = None
             self._cancelled.discard(job.id)
+            if not job.dry_run:
+                # Settled either way: cleaned, skipped, failed or cancelled.
+                pending.clear(job.path)
             if job.state == DONE and not job.dry_run and self._on_file_changed:
                 self._on_file_changed(target)
             self._publish(job)
@@ -275,4 +349,4 @@ class JobQueue:
             # Queued, not run inline: it belongs behind anything already
             # waiting, and it is a job of its own in the UI -- cancellable,
             # with its own progress and its own list of matches.
-            self.submit(job.path, dry_run=False, force=False, source=job.id)
+            self.submit_clean(job.path, source=job.id)

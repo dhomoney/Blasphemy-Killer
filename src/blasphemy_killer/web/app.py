@@ -52,7 +52,13 @@ class Hub:
         loop = self._loop
         if loop is None:
             return
-        loop.call_soon_threadsafe(self._fanout, payload)
+        try:
+            loop.call_soon_threadsafe(self._fanout, payload)
+        except RuntimeError:
+            # The loop has already closed: the server is shutting down while
+            # the worker is still finishing a job. Nobody is listening, and an
+            # exception here would take the worker thread down with it.
+            pass
 
     def _fanout(self, payload: str) -> None:
         for q in list(self._subscribers):
@@ -96,6 +102,9 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         hub.bind(asyncio.get_running_loop())
+        # After the hub is bound, so a restored job's first event reaches any
+        # browser that is already watching.
+        jobs.restore_pending()
         yield
         jobs.shutdown()
         library.shutdown()

@@ -252,7 +252,8 @@ function jobRow(job) {
     head.append(cancel);
   }
 
-  if (job.kind === "download" && job.state === "done" && job.path) {
+  // Downloads and the cleans they queue both end with a file worth watching.
+  if (job.state === "done" && job.path && (job.kind === "download" || job.source)) {
     const play = document.createElement("button");
     play.className = "link";
     play.textContent = "play";
@@ -381,6 +382,21 @@ function openPlayer(path, name) {
   $("player-panel").hidden = false;
   renderPlayerMatches();
   $("player-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function reloadPlayer() {
+  const { el, path } = state.player;
+  if (!el) return;
+  const at = el.currentTime;
+  const wasPlaying = !el.paused;
+  // The query string is ignored by the server and defeats the browser cache,
+  // which is otherwise entitled to hand back the pre-clean bytes.
+  el.src = `/api/media?path=${encodeURIComponent(path)}&v=${Date.now()}`;
+  el.load();                               // openPlayer's loadedmetadata handler re-marks the timeline
+  el.addEventListener("loadedmetadata", () => {
+    el.currentTime = at;
+    if (wasPlaying) el.play().catch(() => { /* autoplay blocked; the seek still landed */ });
+  }, { once: true });
 }
 
 function closePlayer() {
@@ -570,7 +586,17 @@ async function cleanFinished(job) {
   const slash = job.path.lastIndexOf("/");
   const dir = slash === -1 ? "" : job.path.slice(0, slash);
   if (dir === state.path) await browse(state.path);
-  openPlayer(job.path, job.path.split("/").pop());
+
+  if (state.player.path === job.path) {
+    // The file under the open player is the one that just changed; what it has
+    // buffered is the version from before the mutes.
+    reloadPlayer();
+  } else if (!state.player.path) {
+    openPlayer(job.path, job.path.split("/").pop());
+  }
+  // Otherwise something else is playing and it stays playing: queue three URLs
+  // and each finished clean would yank you out of what you were watching. The
+  // job row's play link is there for when you want it.
 }
 
 // --- event stream ----------------------------------------------------------

@@ -11,11 +11,11 @@ rewrite the file with refreshed cookies after a download.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from .. import config as config_module
 from ..config import Config
+from .durable import write_atomic
 
 UPLOAD_NAME = "cookies.txt"
 
@@ -102,54 +102,14 @@ def validate(raw: bytes) -> str:
     return text
 
 
-def _sync_dir(directory: Path) -> None:
-    """Persist the rename itself, best effort.
-
-    Without it the new name can reach the disk before the contents it points
-    at, so a crash in between leaves the file there and empty. Not every
-    filesystem allows fsync on a directory, and by this point the replace has
-    already happened, so a refusal is not worth failing the upload over.
-    """
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-
-
 def save(raw: bytes) -> Path:
     """Validate and store the upload, replacing any previous one."""
-    text = validate(raw)
-    path = upload_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
     # 0600 from the moment it exists, and swapped in atomically: the file
     # grants access to the uploader's logged-in accounts, and a download may be
-    # reading the previous one right now.
-    #
-    # Flushed all the way to the disk before the rename, not just out of
-    # Python's buffer. An atomic replace only promises that the name flips from
-    # one complete file to another; it promises nothing about the contents
-    # having landed, and a kernel panic between the two is how this ends up as
-    # a zero-byte cookies.txt that refuses every later download.
-    tmp = path.with_name(f".{UPLOAD_NAME}.new")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
-    _sync_dir(path.parent)
-    return path
+    # reading the previous one right now. write_atomic also flushes it to the
+    # disk before the rename -- a kernel panic in that gap is how this ends up
+    # as a zero-byte cookies.txt that refuses every later download.
+    return write_atomic(upload_path(), validate(raw), mode=0o600)
 
 
 def remove() -> bool:

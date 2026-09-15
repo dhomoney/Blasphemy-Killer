@@ -316,6 +316,116 @@ def test_a_failed_download_cleans_nothing(client: TestClient, monkeypatch, fake_
     assert fake_clean == []
 
 
+def test_a_cancelled_download_cleans_nothing(client: TestClient, monkeypatch, fake_clean):
+    from blasphemy_killer.pipeline import Cancelled
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    def _stopped(*_a, **_k):
+        raise Cancelled()
+
+    monkeypatch.setattr(jobs_mod, "download", _stopped)
+    created = client.post("/api/downloads", json={"url": "https://example.com/v"})
+    assert _await_job(client, created.json()["job"]["id"])["state"] == "cancelled"
+
+    import time
+    time.sleep(0.2)
+    assert [j for j in client.get("/api/jobs").json()["jobs"] if j.get("source")] == []
+    assert fake_clean == []
+
+
+def _stopped_queue(media_root: Path):
+    """A queue whose worker has been stopped, so submitted jobs stay queued."""
+    from blasphemy_killer.web.jobs import JobQueue
+    queue = JobQueue(media_root, load_config(), broadcast=lambda _m: None)
+    queue.shutdown()
+    return queue
+
+
+def test_a_pending_dry_run_does_not_swallow_the_promised_clean(media_root: Path):
+    """submit() folds a repeat request into what is already queued, which is
+    right for a person clicking twice and wrong for a promise: a dry run would
+    leave the file uncleaned and the UI saying "cleaning next" forever."""
+    queue = _stopped_queue(media_root)
+    audit = queue.submit("movie.mp4", dry_run=True, force=False)
+    promised = queue.submit_clean("movie.mp4", source="1")
+
+    assert promised.id != audit.id
+    assert promised.dry_run is False
+    assert promised.source == "1"
+
+
+def test_an_identical_waiting_clean_is_adopted_not_duplicated(media_root: Path):
+    queue = _stopped_queue(media_root)
+    first = queue.submit("movie.mp4", dry_run=False, force=False)
+    promised = queue.submit_clean("movie.mp4", source="1")
+
+    assert promised.id == first.id
+    assert promised.source == "1"          # stamped, so the browser can find it
+    assert len(queue.list()) == 1
+
+
+# --- promises that outlive the process --------------------------------------
+#
+# A clean queued from the listing is a live decision; one queued by a finished
+# download is a promise made while the user may be elsewhere. A restart in
+# between would leave the file looking merely "not scanned", with nothing
+# anywhere saying a promise had been dropped.
+
+
+def test_a_promised_clean_is_written_down(media_root: Path):
+    from blasphemy_killer.web import pending
+
+    queue = _stopped_queue(media_root)
+    queue.submit_clean("movie.mp4", source="1")
+    assert pending.load() == [{"path": "movie.mp4", "force": False}]
+
+
+def test_a_finished_clean_settles_the_promise(client: TestClient, fake_download, fake_clean):
+    from blasphemy_killer.web import pending
+
+    created = client.post("/api/downloads", json={"url": "https://example.com/v"})
+    download_job = _await_job(client, created.json()["job"]["id"])
+    _await_follow_up(client, download_job["id"])
+    assert pending.load() == []
+
+
+def test_a_promised_clean_is_requeued_at_startup(media_root: Path, fake_clean):
+    from blasphemy_killer.web import pending
+
+    pending.record("movie.mp4")
+    with TestClient(create_app(media_root, load_config())) as c:
+        jobs = c.get("/api/jobs").json()["jobs"]
+        assert [j["path"] for j in jobs] == ["movie.mp4"]
+        assert jobs[0]["dry_run"] is False
+        assert _await_job(c, jobs[0]["id"])["state"] == "done"
+    assert fake_clean[0]["path"] == media_root / "movie.mp4"
+    assert pending.load() == []            # and the promise is settled again
+
+
+@pytest.mark.parametrize("entry", ["vanished.mp4", "../../etc/passwd"])
+def test_an_unusable_pending_entry_is_dropped_not_trusted(media_root: Path, fake_clean,
+                                                          entry: str):
+    """The file lives in a volume a person can edit, so what it says is checked
+    against the media root rather than believed."""
+    from blasphemy_killer.web import pending
+
+    pending.record(entry)
+    with TestClient(create_app(media_root, load_config())) as c:
+        assert c.get("/api/jobs").json()["jobs"] == []
+    assert pending.load() == []
+    assert fake_clean == []
+
+
+def test_a_corrupt_pending_file_does_not_stop_the_server(media_root: Path, fake_clean,
+                                                         isolated_config_dir: Path):
+    """Validated when it is read, not trusted because it exists -- the same
+    lesson as the cookies file. A truncated write must not be fatal."""
+    (isolated_config_dir / "pending-cleans.json").write_text("{ this is not json")
+    with TestClient(create_app(media_root, load_config())) as c:
+        assert c.get("/api/config").status_code == 200
+        assert c.get("/api/jobs").json()["jobs"] == []
+
+
 def test_download_rejects_non_http_urls(client: TestClient):
     for url in ("file:///etc/passwd", "ftp://example.com/v", "/etc/passwd", ""):
         res = client.post("/api/downloads", json={"url": url})
@@ -613,6 +723,7 @@ def test_the_upload_is_flushed_to_disk_before_the_rename(monkeypatch,
     import os as os_module
 
     from blasphemy_killer.web import cookies as cookies_mod
+    from blasphemy_killer.web import durable as durable_mod
 
     events: list[str] = []
     real_fsync, real_replace = os_module.fsync, os_module.replace
@@ -625,8 +736,10 @@ def test_the_upload_is_flushed_to_disk_before_the_rename(monkeypatch,
         events.append("replace")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(cookies_mod.os, "fsync", spy_fsync)
-    monkeypatch.setattr(cookies_mod.os, "replace", spy_replace)
+    # The write itself lives in durable.write_atomic now; cookies.save is still
+    # the entry point being guarded.
+    monkeypatch.setattr(durable_mod.os, "fsync", spy_fsync)
+    monkeypatch.setattr(durable_mod.os, "replace", spy_replace)
 
     cookies_mod.save(NETSCAPE.encode())
 

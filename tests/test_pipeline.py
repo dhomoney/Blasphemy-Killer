@@ -181,3 +181,54 @@ def test_cancellation_propagates_and_leaves_the_file_alone(
 
     assert target.read_bytes() == before
     assert not list(tmp_path.glob(".*bk-tmp*"))
+
+
+def _cancel_at(stage_name: str, events: list):
+    """Cancel the moment a given stage is announced. Cheaper than counting
+    check_cancelled calls, and it says which checkpoint is under test."""
+    def check() -> None:
+        current = [e.stage for e in events if isinstance(e, StageChanged)]
+        if current and current[-1] == stage_name:
+            raise Cancelled()
+    return check
+
+
+def test_a_cancel_after_the_temp_file_exists_leaves_nothing_behind(
+    fixture_mp4: Path, tmp_path: Path, cfg, monkeypatch
+):
+    """Cancelling at the rendering checkpoint is past mkstemp. Cancelled is not
+    an error, so it used to sail past the except clause that cleans up -- and
+    the temp file is a dot-file, which Library.list_dir filters out, so one
+    left behind is invisible in the media directory forever."""
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    before = target.read_bytes()
+    _fake_transcript(monkeypatch, [Word(text="god", start=1.0, end=1.4)])
+
+    events: list = []
+    with pytest.raises(Cancelled):
+        process(target, cfg, dry_run=False, force=False, tmp_dir=tmp_path,
+                on_event=_record(events), check_cancelled=_cancel_at("rendering", events))
+
+    assert target.read_bytes() == before
+    assert not list(tmp_path.glob(".*bk-tmp*"))
+
+
+def test_a_cancel_during_rendering_is_honoured_before_the_swap(
+    fixture_mp4: Path, tmp_path: Path, cfg, monkeypatch
+):
+    """Rendering is the long pass and has no checkpoints of its own, so a
+    cancel raised during it can only be answered on the far side. It has to be:
+    otherwise "cancelling..." ends with the file replaced anyway."""
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    before = target.read_bytes()
+    _fake_transcript(monkeypatch, [Word(text="god", start=1.0, end=1.4)])
+
+    events: list = []
+    with pytest.raises(Cancelled):
+        process(target, cfg, dry_run=False, force=False, tmp_dir=tmp_path,
+                on_event=_record(events), check_cancelled=_cancel_at("verifying", events))
+
+    assert target.read_bytes() == before
+    assert not list(tmp_path.glob(".*bk-tmp*"))

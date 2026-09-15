@@ -49,7 +49,7 @@ docker compose run --rm blasphemy-killer -r /media
 | Mount | What it holds | If you skip it |
 |---|---|---|
 | `/media` | Your files, bind-mounted from the host | Nothing to process |
-| `/config` | `config.toml`, `marker.key` and any uploaded `cookies.txt` | **Every file gets re-transcribed on every run** |
+| `/config` | `config.toml`, `marker.key`, any uploaded `cookies.txt`, and cleans promised but not yet run | **Every file gets re-transcribed on every run** |
 | `/cache` | The whisper model (~460 MB on first run) | Re-downloaded every run |
 
 The web UI uses exactly the same three volumes.
@@ -125,6 +125,12 @@ already on the timeline. That follow-up is a queue entry of its own, so it can
 be watched and cancelled like any other job. Untick **Clean it when it lands**
 beside the URL bar to download and stop there; the file can still be queued
 from the listing afterwards.
+
+That promise outlives the server, too. It is written to the config volume when
+it is made, so a restart between the download landing and the clean running
+re-queues it at startup instead of quietly dropping it — the file would
+otherwise sit there looking merely "not scanned". Downloads themselves are not
+resumed.
 
 Cancelling a download discards the partial file rather than leaving it in your
 library under a `.part` extension you would never see, and nothing is cleaned

@@ -188,6 +188,7 @@ def process(path: Path, cfg: Config, *, dry_run: bool, force: bool, tmp_dir: Pat
     )
     os.close(fd)
     out_tmp = Path(out_name)
+    replaced = False
     try:
         emit(StageChanged("rendering"))
         check()
@@ -197,10 +198,20 @@ def process(path: Path, cfg: Config, *, dry_run: bool, force: bool, tmp_dir: Pat
             stamp_only(info, out_tmp)
         emit(StageChanged("verifying"))
         verify_output(info, out_tmp)
+        # The last point a cancel can still be honoured. Rendering is the long
+        # pass and has no checkpoints of its own, so a request made during it
+        # arrives here -- before the original is touched, which is the only
+        # thing that makes stopping worth anything.
+        check()
         atomic_replace(out_tmp, path, keep_backup=cfg.keep_backup and bool(intervals))
-    except (MediaError, OSError):
-        out_tmp.unlink(missing_ok=True)
-        raise
+        replaced = True
+    finally:
+        if not replaced:
+            # Whatever went wrong -- a failure, or a cancel, which is not an
+            # error and so never reached the old except clause. The temp file
+            # is a dot-file, and Library.list_dir filters those out, so one
+            # left behind here is invisible in the media directory forever.
+            out_tmp.unlink(missing_ok=True)
 
     if cfg.write_report:
         emit(StageChanged("reporting"))
