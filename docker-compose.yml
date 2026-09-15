@@ -7,7 +7,7 @@
 
 services:
   blasphemy-killer:
-    image: dhomoney/blasphemy-killer:2.2.0
+    image: dhomoney/blasphemy-killer:2.2.1
     volumes:
       # Mount the DIRECTORY holding your media, never an individual file:
       # cleaning writes a temp file alongside the original and renames it over
@@ -29,7 +29,7 @@ services:
 
   # The web UI. Same image and same volumes; `serve` is what switches it on.
   web:
-    image: dhomoney/blasphemy-killer:2.2.0
+    image: dhomoney/blasphemy-killer:2.2.1
     command: ["serve"]
     ports:
       # Published to 127.0.0.1 deliberately: the UI has NO authentication and

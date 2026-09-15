@@ -265,7 +265,7 @@ function jobRow(job) {
     const bar = document.createElement("div");
     bar.className = "bar";
     const fill = document.createElement("i");
-    fill.style.width = `${Math.round((job.progress || 0) * 100)}%`;
+    fill.style.width = `${percent(job)}%`;
     bar.append(fill);
     li.append(bar);
   }
@@ -306,11 +306,17 @@ function note(text) {
   return p;
 }
 
+// A fraction from the server can overshoot when it was derived from an
+// estimated size, so never render more than 100%.
+function percent(job) {
+  return Math.round(Math.min(Math.max(job.progress || 0, 0), 1) * 100);
+}
+
 function describe(job) {
   if (job.kind === "download") return describeDownload(job);
   if (job.state === "running") {
     if (job.cancel_requested) return "cancelling…";
-    const pct = Math.round((job.progress || 0) * 100);
+    const pct = percent(job);
     return job.stage === "transcribing" ? `transcribing ${pct}%` : (job.stage || "running");
   }
   if (job.state === "done") {
@@ -326,7 +332,7 @@ function describeDownload(job) {
   if (job.state === "running") {
     if (job.cancel_requested) return "cancelling…";
     if (job.stage === "merging") return "merging…";
-    return `downloading ${Math.round((job.progress || 0) * 100)}%`;
+    return `downloading ${percent(job)}%`;
   }
   if (job.state === "done") return `downloaded in ${Math.round(job.elapsed)}s`;
   return job.state;

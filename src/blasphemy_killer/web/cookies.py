@@ -34,15 +34,33 @@ def upload_path() -> Path:
     return config_module.CONFIG_DIR / UPLOAD_NAME
 
 
+def usable(path: Path) -> bool:
+    """Whether a stored cookies file is still readable as Netscape format.
+
+    Existence is not enough. A file that is there but unusable is worse than no
+    file at all: yt-dlp refuses it outright, so *every* download fails until
+    somebody notices. An unclean shutdown can leave exactly that -- a zero-byte
+    cookies.txt -- so the content is checked rather than trusted because the
+    path exists.
+    """
+    try:
+        validate(path.read_bytes())
+    except (CookieError, OSError):
+        return False
+    return True
+
+
 def effective(cfg: Config) -> Path | None:
     """The cookies file a download should use.
 
     An uploaded file wins over the config.toml setting: it is the more recent
     and more explicit choice, and it survives a restart, so what the UI shows
-    is what the next download gets either way.
+    is what the next download gets either way. It only wins while it is still
+    usable, though -- a corrupt upload falls back to config.toml instead of
+    breaking downloads that would otherwise have worked.
     """
     uploaded = upload_path()
-    return uploaded if uploaded.is_file() else cfg.cookies
+    return uploaded if uploaded.is_file() and usable(uploaded) else cfg.cookies
 
 
 def _is_cookie_line(line: str) -> bool:
@@ -84,6 +102,26 @@ def validate(raw: bytes) -> str:
     return text
 
 
+def _sync_dir(directory: Path) -> None:
+    """Persist the rename itself, best effort.
+
+    Without it the new name can reach the disk before the contents it points
+    at, so a crash in between leaves the file there and empty. Not every
+    filesystem allows fsync on a directory, and by this point the replace has
+    already happened, so a refusal is not worth failing the upload over.
+    """
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def save(raw: bytes) -> Path:
     """Validate and store the upload, replacing any previous one."""
     text = validate(raw)
@@ -93,15 +131,24 @@ def save(raw: bytes) -> Path:
     # 0600 from the moment it exists, and swapped in atomically: the file
     # grants access to the uploader's logged-in accounts, and a download may be
     # reading the previous one right now.
+    #
+    # Flushed all the way to the disk before the rename, not just out of
+    # Python's buffer. An atomic replace only promises that the name flips from
+    # one complete file to another; it promises nothing about the contents
+    # having landed, and a kernel panic between the two is how this ends up as
+    # a zero-byte cookies.txt that refuses every later download.
     tmp = path.with_name(f".{UPLOAD_NAME}.new")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, path)
     except OSError:
         tmp.unlink(missing_ok=True)
         raise
+    _sync_dir(path.parent)
     return path
 
 

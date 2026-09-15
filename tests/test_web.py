@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from blasphemy_killer.config import load_config
+from blasphemy_killer.web import cookies as cookies_module
 from blasphemy_killer.web.app import create_app
 from blasphemy_killer.web.library import Library, PathDenied, resolve_within
 
@@ -520,3 +521,98 @@ def test_removing_cookies_takes_effect_for_the_next_download(client: TestClient,
     created = client.post("/api/downloads", json={"url": "https://example.com/v"})
     _await_job(client, created.json()["job"]["id"])
     assert fake_download[0]["cookies"] == load_config().cookies
+
+
+# --- cookies that survived a crash ------------------------------------------
+#
+# An atomic replace says the name flips between two complete files. It says
+# nothing about the contents reaching the disk first, so a kernel panic in the
+# gap leaves a zero-byte cookies.txt -- which yt-dlp refuses outright, failing
+# every download until somebody thinks to look at a file the UI said was fine.
+
+
+def test_the_upload_is_flushed_to_disk_before_the_rename(monkeypatch,
+                                                         isolated_config_dir: Path):
+    """The ordering is the whole fix, so assert the ordering, not just that
+    fsync was called."""
+    import os as os_module
+
+    from blasphemy_killer.web import cookies as cookies_mod
+
+    events: list[str] = []
+    real_fsync, real_replace = os_module.fsync, os_module.replace
+
+    def spy_fsync(fd):
+        events.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        events.append("replace")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(cookies_mod.os, "fsync", spy_fsync)
+    monkeypatch.setattr(cookies_mod.os, "replace", spy_replace)
+
+    cookies_mod.save(NETSCAPE.encode())
+
+    assert events[:2] == ["fsync", "replace"], events
+    assert (isolated_config_dir / "cookies.txt").read_text() == NETSCAPE
+
+
+def test_a_zero_byte_cookies_file_is_ignored_rather_than_used(client: TestClient,
+                                                              isolated_config_dir: Path):
+    """What a crash actually leaves behind. Downloads have to keep working."""
+    _put_cookies(client, NETSCAPE)
+    (isolated_config_dir / "cookies.txt").write_bytes(b"")
+
+    assert client.get("/api/cookies").json()["present"] is False
+    assert cookies_module.effective(load_config()) is None
+
+
+def test_a_truncated_cookies_file_is_ignored_rather_than_used(client: TestClient,
+                                                              isolated_config_dir: Path):
+    """Half a line is not a cookie. Same treatment as an empty file."""
+    _put_cookies(client, NETSCAPE)
+    (isolated_config_dir / "cookies.txt").write_text("# Netscape HTTP Cookie File\n")
+
+    assert client.get("/api/cookies").json()["present"] is False
+    assert cookies_module.effective(load_config()) is None
+
+
+def test_a_corrupt_upload_falls_back_to_the_configured_cookies(client: TestClient,
+                                                               isolated_config_dir: Path,
+                                                               tmp_path: Path):
+    """config.toml named a working file before the upload did. Losing the
+    upload should hand downloads back to it, not break them."""
+    configured = tmp_path / "from-config.txt"
+    configured.write_text(NETSCAPE)
+    cfg = load_config()
+    cfg.cookies = configured
+
+    _put_cookies(client, NETSCAPE)
+    (isolated_config_dir / "cookies.txt").write_bytes(b"")
+
+    assert cookies_module.effective(cfg) == configured
+
+
+def test_a_download_does_not_use_a_corrupt_cookies_file(client: TestClient,
+                                                        fake_download,
+                                                        isolated_config_dir: Path):
+    """The bug as it was reported: every download failing with 'does not look
+    like a Netscape format cookies file'."""
+    _put_cookies(client, NETSCAPE)
+    (isolated_config_dir / "cookies.txt").write_bytes(b"")
+
+    created = client.post("/api/downloads", json={"url": "https://example.com/v", "dest": ""})
+    _await_job(client, created.json()["job"]["id"])
+    assert fake_download[0]["cookies"] != isolated_config_dir / "cookies.txt"
+
+
+def test_a_healthy_uploaded_file_is_still_the_one_downloads_use(client: TestClient,
+                                                                fake_download,
+                                                                isolated_config_dir: Path):
+    """The guard must not cost the feature its normal behaviour."""
+    _put_cookies(client, NETSCAPE)
+    created = client.post("/api/downloads", json={"url": "https://example.com/v", "dest": ""})
+    _await_job(client, created.json()["job"]["id"])
+    assert fake_download[0]["cookies"] == isolated_config_dir / "cookies.txt"

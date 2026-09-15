@@ -53,9 +53,12 @@ class _Reporter:
         if tmp and str(tmp).endswith(".part"):
             self.partial = Path(tmp)
         if state == "downloading":
+            # total_bytes_estimate is a guess, and a low one often enough that
+            # done/total sails past 1.0 -- a 334% progress bar was how this was
+            # found. Clamp here rather than in each consumer.
             total = status.get("total_bytes") or status.get("total_bytes_estimate")
             done = status.get("downloaded_bytes") or 0
-            self._report("downloading", done / total if total else None)
+            self._report("downloading", min(done / total, 1.0) if total else None)
         elif state == "finished":
             self._report("downloading", 1.0)
 

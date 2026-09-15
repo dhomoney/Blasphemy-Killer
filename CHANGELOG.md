@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.2.1
+
+Three fixes to URL downloads, all found while investigating a first run of
+2.2.0 that sat at "downloading 0%" and never moved. The stall itself was not
+this program — the Docker Desktop VM's guest kernel panicked underneath it,
+in its gRPC-FUSE bind mount, while yt-dlp was creating the `.part` file. What
+the crash then left behind was ours.
+
+### Fixed
+
+- **A cookies.txt that survived a crash no longer breaks every download.**
+  The upload was swapped in atomically, but an atomic replace only promises
+  that the name flips between two complete files — it promises nothing about
+  the contents having reached the disk first. A machine that dies in that gap
+  leaves a zero-byte `cookies.txt`, which yt-dlp refuses outright, so every
+  later download fails with "does not look like a Netscape format cookies
+  file" while the UI still reports cookies in place. The upload is now flushed
+  to the disk before the rename, and the rename itself is persisted after it.
+- **A cookies file is checked when it is read, not just when it is written.**
+  Existence was taken as proof a stored file was usable. It is now validated
+  at the point a download asks for it, so an unusable one is ignored and
+  downloads fall back to the `cookies` path in `config.toml` instead of
+  failing. The bad file is left on disk rather than deleted, and uploading a
+  new one recovers as it always did. `GET /api/cookies` stops advertising an
+  unreadable file as present, which is what made this invisible.
+- **Download progress can no longer exceed 100%.** When yt-dlp has only
+  `total_bytes_estimate` to go on it can guess low, and the fraction sailed
+  past 1.0 — an observed run reported 334%, which the UI rendered as both an
+  overflowing bar and a "downloading 334%" label. Clamped at the source, and
+  again where it is rendered.
+
 ## 2.2.0
 
 Paste a URL, watch it download, and play it back without leaving the page.

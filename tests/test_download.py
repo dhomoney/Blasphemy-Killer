@@ -107,6 +107,26 @@ def test_unknown_total_reports_no_fraction(fake_yt_dlp, monkeypatch):
     assert seen == [("downloading", None)]
 
 
+def test_an_underestimated_size_never_reports_past_100_percent(fake_yt_dlp, monkeypatch):
+    """total_bytes_estimate is a guess. When it guesses low, downloaded/total
+    goes over 1.0 and the UI renders a 334% progress bar."""
+    import yt_dlp
+
+    class _BadEstimate(_FakeYDL):
+        def extract_info(self, url, download):
+            for hook in self.opts.get("progress_hooks", []):
+                hook({"status": "downloading", "downloaded_bytes": 30,
+                      "total_bytes_estimate": 100})
+                hook({"status": "downloading", "downloaded_bytes": 334,
+                      "total_bytes_estimate": 100})
+            return {"requested_downloads": [{"filepath": "/tmp/video.mp4"}]}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _BadEstimate)
+    seen: list[tuple[str, float | None]] = []
+    download_mod.download("https://example.com/v", on_progress=lambda s, f: seen.append((s, f)))
+    assert seen == [("downloading", 0.3), ("downloading", 1.0)]
+
+
 def test_progress_callback_exception_aborts_and_propagates(fake_yt_dlp):
     """Raising from the callback is how the web UI cancels a running download.
     It has to come back out as itself, not as a yt-dlp error."""
