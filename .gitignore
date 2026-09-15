@@ -15,3 +15,6 @@ cookies.txt
 CLAUDE.md
 .claude/
 .bk-web/
+
+# Local compose overrides (machine-specific paths)
+docker-compose.override.yml
