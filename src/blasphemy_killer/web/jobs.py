@@ -1,9 +1,14 @@
-"""Single-worker job queue driving pipeline.process.
+"""Single-worker job queue driving pipeline.process and URL downloads.
 
 One worker, deliberately: transcription saturates the CPU, so a second
 concurrent job would only make both slower. The worker is a plain thread rather
 than anything on the event loop -- ctranslate2 releases the GIL while it
 computes, so SSE keeps flowing while a job runs.
+
+Downloads share that worker rather than running alongside it. A download is
+network-bound and would happily overlap a transcription, but one queue means
+one obvious order of events, and a file cannot start being cleaned halfway
+through arriving.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import Config
+from ..download import DownloadError, download
 from ..media import MediaError
 from ..pipeline import (
     Cancelled, Finished, MarkerUnsigned, MatchFound, MatchingComplete,
@@ -25,14 +31,18 @@ from ..pipeline import (
 )
 
 QUEUED, RUNNING, DONE, FAILED, CANCELLED = "queued", "running", "done", "failed", "cancelled"
+PROCESS, DOWNLOAD = "process", "download"
 
 
 @dataclass
 class Job:
     id: str
-    path: str            # relative to the media root
+    path: str            # relative to the media root; "" until a download names its file
     dry_run: bool
     force: bool
+    kind: str = PROCESS  # PROCESS | DOWNLOAD
+    url: str | None = None
+    dest: str = ""       # download only: directory, relative to the media root
     state: str = QUEUED
     stage: str | None = None
     progress: float = 0.0
@@ -51,11 +61,15 @@ class Job:
 
 class JobQueue:
     def __init__(self, root: Path, cfg: Config, broadcast: Callable[[dict], None],
-                 on_file_changed: Callable[[Path], None] | None = None):
+                 on_file_changed: Callable[[Path], None] | None = None,
+                 resolve_cookies: Callable[[], Path | None] | None = None):
         self.root = root
         self.cfg = cfg
         self._broadcast = broadcast
         self._on_file_changed = on_file_changed
+        # Resolved per download, not once at startup: the cookies file can be
+        # uploaded or removed while the server is running.
+        self._resolve_cookies = resolve_cookies
         self._ids = itertools.count(1)
         self._pending: queue.Queue[Job] = queue.Queue()
         self._jobs: dict[str, Job] = {}
@@ -75,6 +89,22 @@ class JobQueue:
                 if existing.path == rel_path and existing.state in (QUEUED, RUNNING):
                     return existing
             job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run, force=force)
+            self._jobs[job.id] = job
+        self._pending.put(job)
+        self._publish(job)
+        return job
+
+    def submit_download(self, url: str, dest: str) -> Job:
+        """Enqueue a URL download into dest (a directory relative to the media
+        root). A URL already queued or running is not queued twice."""
+        with self._lock:
+            for existing in self._jobs.values():
+                if existing.url == url and existing.state in (QUEUED, RUNNING):
+                    return existing
+            job = Job(
+                id=str(next(self._ids)), path="", dry_run=True, force=False,
+                kind=DOWNLOAD, url=url, dest=dest,
+            )
             self._jobs[job.id] = job
         self._pending.put(job)
         self._publish(job)
@@ -117,7 +147,10 @@ class JobQueue:
                 return
             if job.state == CANCELLED:
                 continue
-            self._execute(job)
+            if job.kind == DOWNLOAD:
+                self._execute_download(job)
+            else:
+                self._execute(job)
 
     def _execute(self, job: Job) -> None:
         job.state = RUNNING
@@ -174,4 +207,55 @@ class JobQueue:
             self._cancelled.discard(job.id)
             if job.state == DONE and not job.dry_run and self._on_file_changed:
                 self._on_file_changed(target)
+            self._publish(job)
+
+    def _execute_download(self, job: Job) -> None:
+        job.state = RUNNING
+        job.stage = "downloading"
+        self._current = job
+        self._publish(job)
+        started = time.monotonic()
+        last_published = 0.0
+
+        def on_progress(stage: str, fraction: float | None) -> None:
+            """Called from inside yt-dlp. Raising is how a cancel gets out."""
+            nonlocal last_published
+            if job.id in self._cancelled:
+                raise Cancelled()
+            changed = stage != job.stage
+            job.stage = stage
+            if fraction is not None:
+                job.progress = fraction
+            # yt-dlp fires this per chunk; publishing every one would flood SSE.
+            now = time.monotonic()
+            if changed or now - last_published >= 0.25:
+                last_published = now
+                self._publish(job)
+
+        root = self.root.resolve()
+        dest = (root / job.dest) if job.dest else root
+        try:
+            cookies = (
+                self._resolve_cookies() if self._resolve_cookies else self.cfg.cookies
+            )
+            landed = download(
+                job.url, cookies=cookies,
+                dest_dir=dest, on_progress=on_progress,
+            ).resolve()
+            try:
+                job.path = str(landed.relative_to(root))
+            except ValueError:
+                raise ValueError(f"download landed outside the media root: {landed}") from None
+            job.state = DONE
+        except Cancelled:
+            job.state = CANCELLED
+        except (DownloadError, OSError, ValueError) as exc:
+            job.state = FAILED
+            job.error = str(exc)
+        finally:
+            job.stage = None
+            job.progress = 1.0 if job.state == DONE else job.progress
+            job.elapsed = time.monotonic() - started
+            self._current = None
+            self._cancelled.discard(job.id)
             self._publish(job)

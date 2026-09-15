@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.2.0
+
+Paste a URL, watch it download, and play it back without leaving the page.
+The web UI gained the half of the CLI it was missing — yt-dlp downloads — plus
+a player, so a video can be fetched, scanned and checked in one place.
+
+### Added
+
+- **Paste a URL into the web UI.** The bar above the library hands it to
+  yt-dlp, downloads into the directory being browsed, reports progress in the
+  queue, and opens the result in the player. The browser supplies the URL and
+  nothing else: cookies come from `config.toml`, because an unauthenticated
+  page that took a file path would be a way to read any file on the host.
+- **A player.** Clicking a filename plays it in the page. `GET /api/media`
+  answers range requests, so seeking through a long file does not download it
+  first. A scanned file shows its matches as marks on a strip under the player
+  and as a list beside it; clicking either seeks to just before that moment.
+- **Cookies upload.** The row under the URL bar takes a `cookies.txt` for
+  age-gated, members-only or private videos. The browser reads the file and
+  sends its contents, never a path, so nothing caller-supplied is ever opened
+  server-side; it is checked for actually being Netscape format (a JSON export
+  is refused with an explanation instead of failing mid-download) and written
+  to the config directory mode `600`. The UI reports how many cookies are in
+  place and can remove them, but never reads them back out. An upload wins over
+  a `cookies` path in `config.toml`, and is resolved per download, so uploading
+  or removing cookies affects the next download without a restart.
+- `download()` takes `dest_dir` and an `on_progress` callback, and downloads
+  can be cancelled from the queue like any other job. Cancelling discards the
+  partial file — `.part` is not a media extension, so anything left behind
+  would sit in the library invisibly.
+
 ## 2.1.0
 
 A web UI, served by the same image. `docker compose up web`, then browse the

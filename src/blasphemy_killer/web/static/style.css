@@ -57,7 +57,16 @@ main {
   padding: 16px 20px 40px;
   align-items: start;
 }
-@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+/* The player wants the wide column, under the library it belongs to; the
+   queue keeps the narrow one. Auto-placement would interleave them. */
+#browser { grid-column: 1; grid-row: 1; }
+#player-panel { grid-column: 1; grid-row: 2; }
+#queue-panel { grid-column: 2; grid-row: 1; }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  #browser, #player-panel, #queue-panel { grid-column: auto; grid-row: auto; }
+}
 
 .panel {
   background: var(--panel);
@@ -79,6 +88,56 @@ nav#crumbs { font-size: 13px; display: flex; gap: 4px; flex-wrap: wrap; min-widt
 nav#crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
 nav#crumbs a:hover { text-decoration: underline; }
 nav#crumbs span.sep { color: var(--muted); }
+
+.fetch {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.fetch input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.fetch input:focus { outline: none; border-color: var(--accent); }
+.fetch-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  word-break: break-word;
+}
+
+.cookies {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.cookies-state { font-size: 12px; color: var(--muted); }
+#cookies-hint { flex-basis: 100%; }
+
+/* The native file input is unstyleable; the label is the button. */
+.file-button input[type="file"] { display: none; }
+.file-button span {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  display: inline-block;
+}
+.file-button span:hover { border-color: var(--accent); }
 
 .toolbar {
   display: flex;
@@ -136,6 +195,47 @@ ul#jobs li:last-child { border-bottom: none; }
 
 .bar { height: 5px; background: var(--bar); border-radius: 3px; margin-top: 7px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s ease; }
+
+/* --- player --- */
+
+.player-name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+#player-close { margin-left: auto; }
+.player-wrap { background: #000; display: flex; }
+.player-wrap video { width: 100%; max-height: 62vh; display: block; }
+.player-wrap audio { width: 100%; margin: 10px 14px; }
+
+/* Where the matches sit in the file, to the same scale as the scrub bar
+   above it -- a rough map of what is about to be muted. */
+.timeline { padding: 10px 14px 0; }
+.markers {
+  position: relative;
+  height: 8px;
+  background: var(--bar);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.markers > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: var(--danger);
+  cursor: pointer;
+}
+.markers > i:hover { background: var(--text); }
+.player-note { color: var(--muted); font-size: 12px; margin: 0; padding: 10px 14px 0; }
+
+#player-matches { padding: 10px 14px 12px; max-height: 190px; overflow: auto; }
+.matches.seekable li { cursor: pointer; padding: 2px 0; }
+.matches.seekable li:hover { color: var(--text); }
+.matches.seekable li:hover time { color: var(--accent); opacity: 1; }
 
 .matches { margin: 7px 0 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
 .matches li { font-size: 12px; color: var(--muted); display: flex; gap: 8px; }

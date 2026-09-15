@@ -7,7 +7,14 @@ const state = {
   entries: [],
   jobs: new Map(),
   selected: new Set(),
+  player: { path: null, el: null, duration: 0 },
 };
+
+// Extensions that get an <audio> element instead of a <video> one.
+const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav"];
+
+// Seeking to a match lands slightly before it, so you hear the run-up.
+const SEEK_LEAD_IN = 1.5;
 
 const $ = (id) => document.getElementById(id);
 
@@ -126,11 +133,12 @@ function fileRow(entry) {
 
   const tdName = document.createElement("td");
   tdName.className = "name";
-  const span = document.createElement("span");
-  span.className = "fname";
-  span.textContent = entry.name;          // textContent: filenames are untrusted
-  span.title = entry.name;
-  tdName.append(span);
+  const link = document.createElement("a");
+  link.className = "fname";
+  link.textContent = entry.name;          // textContent: filenames are untrusted
+  link.title = `Play ${entry.name}`;
+  link.onclick = () => openPlayer(entry.path, entry.name);
+  tdName.append(link);
 
   const tdStatus = document.createElement("td");
   tdStatus.className = "col-status";
@@ -226,8 +234,8 @@ function jobRow(job) {
 
   const path = document.createElement("span");
   path.className = "job-path";
-  path.textContent = job.path;
-  path.title = job.path;
+  path.textContent = job.path || job.url || "";
+  path.title = job.url || job.path;
 
   const stateLabel = document.createElement("span");
   stateLabel.className = `job-state ${job.state}`;
@@ -242,6 +250,14 @@ function jobRow(job) {
     cancel.disabled = job.cancel_requested;
     cancel.onclick = () => api(`/api/jobs/${job.id}`, { method: "DELETE" }).catch(console.error);
     head.append(cancel);
+  }
+
+  if (job.kind === "download" && job.state === "done" && job.path) {
+    const play = document.createElement("button");
+    play.className = "link";
+    play.textContent = "play";
+    play.onclick = () => openPlayer(job.path, job.path.split("/").pop());
+    head.append(play);
   }
   li.append(head);
 
@@ -267,7 +283,7 @@ function jobRow(job) {
       ul.append(item);
     }
     li.append(ul);
-  } else if (job.state === "done" && !job.skipped_reason) {
+  } else if (job.kind !== "download" && job.state === "done" && !job.skipped_reason) {
     li.append(note("no matches found"));
   }
 
@@ -291,6 +307,7 @@ function note(text) {
 }
 
 function describe(job) {
+  if (job.kind === "download") return describeDownload(job);
   if (job.state === "running") {
     if (job.cancel_requested) return "cancelling…";
     const pct = Math.round((job.progress || 0) * 100);
@@ -305,6 +322,226 @@ function describe(job) {
   return job.state;
 }
 
+function describeDownload(job) {
+  if (job.state === "running") {
+    if (job.cancel_requested) return "cancelling…";
+    if (job.stage === "merging") return "merging…";
+    return `downloading ${Math.round((job.progress || 0) * 100)}%`;
+  }
+  if (job.state === "done") return `downloaded in ${Math.round(job.elapsed)}s`;
+  return job.state;
+}
+
+// --- player ----------------------------------------------------------------
+//
+// Scrubbing is the browser's own: /api/media answers Range requests, so the
+// <video> element seeks without pulling the whole file first. What this adds
+// on top is where the matches are -- markers on a strip under the controls,
+// and a clickable list beside it.
+
+function openPlayer(path, name) {
+  const isAudio = AUDIO_EXTENSIONS.some((ext) => path.toLowerCase().endsWith(ext));
+  const el = document.createElement(isAudio ? "audio" : "video");
+  el.controls = true;
+  el.preload = "metadata";
+  el.playsInline = true;
+  el.src = `/api/media?path=${encodeURIComponent(path)}`;
+  el.addEventListener("loadedmetadata", () => {
+    state.player.duration = el.duration;
+    renderPlayerMatches();
+  });
+  el.addEventListener("error", () => {
+    // Codecs, mostly: mkv and avi often will not decode natively even though
+    // the file is served perfectly well.
+    playerNote(`This browser cannot play ${name} natively.`);
+  });
+
+  state.player = { path, el, duration: 0 };
+  $("player-wrap").replaceChildren(el);
+  $("player-name").textContent = name;     // textContent: filenames are untrusted
+  $("player-name").title = path;
+  $("player-panel").hidden = false;
+  renderPlayerMatches();
+  $("player-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closePlayer() {
+  const { el } = state.player;
+  if (el) {
+    el.pause();
+    el.removeAttribute("src");
+    el.load();                             // drops the connection, not just the src
+  }
+  state.player = { path: null, el: null, duration: 0 };
+  $("player-wrap").replaceChildren();
+  $("player-panel").hidden = true;
+}
+
+function seek(seconds) {
+  const { el } = state.player;
+  if (!el) return;
+  el.currentTime = Math.max(0, seconds - SEEK_LEAD_IN);
+  el.play().catch(() => { /* autoplay blocked; the seek still landed */ });
+}
+
+function playerNote(text) {
+  const note = $("player-note");
+  note.textContent = text || "";
+  note.hidden = !text;
+}
+
+function scansOf(path) {
+  // Newest first: the most recent scan is the one that still describes the file.
+  return [...state.jobs.values()]
+    .filter((j) => j.kind !== "download" && j.path === path)
+    .sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function matchesFor(path) {
+  const found = scansOf(path).find((j) => j.matches.length);
+  return found ? found.matches : [];
+}
+
+function emptyNote(path) {
+  // "Nothing to mark" and "nothing found" are different answers, and the
+  // difference is the whole point of having scanned.
+  const scanned = scansOf(path).some((j) => j.state === "done" && !j.skipped_reason);
+  return scanned
+    ? "Scanned: no matches found in this file."
+    : "Queue a dry run for this file to mark its matches on the timeline.";
+}
+
+function renderPlayerMatches() {
+  const { path, duration } = state.player;
+  const list = $("player-matches");
+  const markers = $("markers");
+  list.replaceChildren();
+  markers.replaceChildren();
+  if (!path) return;
+
+  const matches = matchesFor(path);
+  $("timeline").hidden = !(matches.length && duration);
+  if (!matches.length) {
+    playerNote(emptyNote(path));
+    return;
+  }
+  playerNote("");
+
+  for (const m of matches) {
+    if (duration) {
+      const mark = document.createElement("i");
+      mark.style.left = `${(m.start / duration) * 100}%`;
+      mark.style.width = `${Math.max(0.4, ((m.end - m.start) / duration) * 100)}%`;
+      mark.title = `${timestamp(m.start)}  ${mask(m.text)}`;
+      mark.onclick = () => seek(m.start);
+      markers.append(mark);
+    }
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = timestamp(m.start);
+    const text = document.createElement("span");
+    text.textContent = mask(m.text);
+    item.append(time, text);
+    item.onclick = () => seek(m.start);
+    list.append(item);
+  }
+}
+
+// --- downloads -------------------------------------------------------------
+
+async function startDownload(event) {
+  event.preventDefault();
+  const input = $("url");
+  const url = input.value.trim();
+  if (!url) return;
+
+  const button = $("fetch-go");
+  button.disabled = true;
+  try {
+    // Downloads land in the directory being browsed, so where a file goes is
+    // wherever you were looking when you pasted the link.
+    await api("/api/downloads", {
+      method: "POST",
+      body: JSON.stringify({ url, dest: state.path }),
+    });
+    input.value = "";
+    fetchError("");
+  } catch (err) {
+    fetchError(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// --- cookies ---------------------------------------------------------------
+//
+// The file never leaves the browser as a path: it is read here and its text is
+// sent as the request body, so the server stores it at one fixed place in the
+// config directory and no caller-supplied path is ever opened.
+
+async function loadCookies() {
+  try {
+    renderCookies(await api("/api/cookies"));
+  } catch (err) {
+    $("cookies-state").textContent = "Cookies: unavailable";
+    console.error(err);
+  }
+}
+
+function renderCookies(status) {
+  const label = $("cookies-state");
+  if (!status.present) {
+    label.textContent = "No cookies file";
+  } else {
+    const plural = status.count === 1 ? "" : "s";
+    label.textContent = status.uploaded
+      ? `${status.count} cookie${plural} uploaded`
+      : `${status.count} cookie${plural} from config.toml`;
+    label.title = status.path;
+  }
+  $("cookies-label").textContent = status.present ? "Replace" : "Upload cookies.txt";
+  // A file named by config.toml is not ours to delete.
+  $("cookies-remove").hidden = !status.uploaded;
+}
+
+async function uploadCookies(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    renderCookies(await api("/api/cookies", {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: await file.text(),
+    }));
+    fetchError("");
+  } catch (err) {
+    fetchError(`Cookies: ${err.message}`);
+  } finally {
+    // Clear it, or picking the same file again fires no change event.
+    event.target.value = "";
+  }
+}
+
+async function removeCookies() {
+  try {
+    renderCookies(await api("/api/cookies", { method: "DELETE" }));
+    fetchError("");
+  } catch (err) {
+    fetchError(`Cookies: ${err.message}`);
+  }
+}
+
+function fetchError(text) {
+  const box = $("fetch-error");
+  box.textContent = text || "";
+  box.hidden = !text;
+}
+
+async function downloadFinished(job) {
+  if (job.dest === state.path) await browse(state.path);
+  if (job.path) openPlayer(job.path, job.path.split("/").pop());
+}
+
 // --- event stream ----------------------------------------------------------
 
 function connect() {
@@ -316,16 +553,27 @@ function connect() {
   source.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === "job") {
+      const previous = state.jobs.get(msg.job.id);
+      const justFinished = msg.job.state === "done" && previous?.state !== "done";
       upsertJob(msg.job);
-      // A finished clean changes the file's status in the listing.
-      if (msg.job.state === "done" && !msg.job.dry_run) {
-        applyScanResult(msg.job.path, true);
+
+      if (msg.job.kind === "download") {
+        // The file only exists, and only has a name, once the job is done.
+        if (justFinished) downloadFinished(msg.job).catch(console.error);
+      } else {
+        // A finished clean changes the file's status in the listing.
+        if (msg.job.state === "done" && !msg.job.dry_run) {
+          applyScanResult(msg.job.path, true);
+        }
+        // New matches belong on the timeline of the file being watched.
+        if (msg.job.path === state.player.path) renderPlayerMatches();
       }
     } else if (msg.type === "scan") {
       applyScanResult(msg.path, msg.cleaned);
     } else if (msg.type === "sync") {
       state.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
       renderJobs();
+      renderPlayerMatches();
     }
   };
 }
@@ -334,6 +582,10 @@ function connect() {
 
 async function main() {
   $("queue-selected").onclick = queueSelected;
+  $("fetch").onsubmit = startDownload;
+  $("cookies-file").onchange = uploadCookies;
+  $("cookies-remove").onclick = removeCookies;
+  $("player-close").onclick = closePlayer;
   $("select-all").onchange = (e) => {
     state.selected.clear();
     if (e.target.checked) {
@@ -352,6 +604,7 @@ async function main() {
   }
 
   connect();
+  loadCookies();
   await browse("");
 }
 

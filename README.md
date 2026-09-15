@@ -49,7 +49,7 @@ docker compose run --rm blasphemy-killer -r /media
 | Mount | What it holds | If you skip it |
 |---|---|---|
 | `/media` | Your files, bind-mounted from the host | Nothing to process |
-| `/config` | `config.toml` and `marker.key` | **Every file gets re-transcribed on every run** |
+| `/config` | `config.toml`, `marker.key` and any uploaded `cookies.txt` | **Every file gets re-transcribed on every run** |
 | `/cache` | The whisper model (~460 MB on first run) | Re-downloaded every run |
 
 The web UI uses exactly the same three volumes.
@@ -109,6 +109,41 @@ Dry run is the default; cleaning files for real takes an explicit confirmation.
 Transcription shows a live progress bar, and a running job can be cancelled
 (it stops at the next transcription checkpoint, usually a second or two).
 
+### Pasting a URL
+
+The bar above the listing takes a video URL and hands it to yt-dlp, the same
+way the CLI does. The download lands in **the directory you are currently
+browsing**, shows its progress in the queue, and opens in the player when it
+finishes. Cancelling a download discards the partial file rather than leaving
+it in your library under a `.part` extension you would never see.
+
+Age-gated, members-only or private videos need cookies, and the row under the
+URL bar uploads a `cookies.txt` for them. The browser reads the file and sends
+its **contents**, never a path — an unauthenticated page that opened
+server-side paths would be a way to read any file on the host. What arrives is
+checked for being a real Netscape cookies.txt (a JSON export, the usual
+mistake, is refused with an explanation rather than failing three minutes into
+a download) and written to `cookies.txt` in the config directory, mode `600`.
+
+The UI shows how many cookies are in place and can remove them again. It never
+sends them back to the browser. An uploaded file takes precedence over a
+`cookies` path set in `config.toml`; a file named there shows up too, but the
+UI will not offer to delete something it did not put there. See
+[Cookies for URL downloads](#cookies-for-url-downloads) for the CLI side.
+
+### Playing and scrubbing
+
+Clicking a filename opens it in a player. Seeking is the browser's own, backed
+by range requests, so scrubbing through a long file does not download it first.
+Once a file has been scanned, its matches appear as marks on a strip under the
+player and as a list beside it; clicking either jumps to a second or so before
+that moment, which is the quickest way to hear what the scan found and check a
+mute landed where it should.
+
+Playback depends on what your browser can decode. Downloads are merged to mp4
+and play everywhere; `.mkv` and `.avi` files in your library often will not
+play natively even though they are served correctly.
+
 ### It has no authentication — keep it on your own machine
 
 Publishing as `127.0.0.1:8080:8080` (what the compose file does) means only
@@ -126,8 +161,8 @@ Running natively, `--host` defaults to `127.0.0.1`, which is IPv4-only — open
 the `http://127.0.0.1:8080` URL it prints rather than `localhost`, which some
 browsers resolve to `::1` first and which would refuse the connection.
 
-The UI covers browsing and queueing. The phrase list and settings stay in
-`config.toml` — see [Configuration](#configuration).
+The UI covers browsing, downloading, playback and queueing. The phrase list and
+settings stay in `config.toml` — see [Configuration](#configuration).
 
 ## Usage
 
@@ -185,7 +220,9 @@ To avoid passing it every time, set it in your config instead:
 cookies = "~/cookies.txt"
 ```
 
-`--cookies` overrides the config value. Note that yt-dlp may rewrite the file
+`--cookies` overrides the config value. The web UI uploads to `cookies.txt` in
+the config directory, and a file uploaded there wins over both for downloads
+started from the UI. Note that yt-dlp may rewrite the file
 with refreshed cookies after a download, and that the file grants access to
 your logged-in accounts — keep it out of version control (this repo's
 `.gitignore` and `.dockerignore` both exclude `cookies.txt`) and readable only
@@ -305,5 +342,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.1.0`) and additionally checks host file ownership,
+`blasphemy-killer:2.2.0`) and additionally checks host file ownership,
 done-marker persistence across runs, and the web UI.

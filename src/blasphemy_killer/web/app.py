@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -15,6 +16,8 @@ from pydantic import BaseModel
 
 from .. import __version__
 from ..config import Config, load_config
+from ..download import is_url
+from . import cookies as cookies_store
 from .jobs import JobQueue
 from .library import Library, PathDenied, resolve_within
 
@@ -67,6 +70,18 @@ class JobRequest(BaseModel):
     force: bool = False
 
 
+class DownloadRequest(BaseModel):
+    url: str
+    dest: str = ""       # directory to download into, relative to the media root
+
+
+def media_type(path: Path) -> str:
+    """Content-Type for playback. A container the browser cannot decode will
+    still be served -- it just will not play -- so a guess is good enough."""
+    guessed, _encoding = mimetypes.guess_type(path.name)
+    return guessed or "application/octet-stream"
+
+
 def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
     cfg = cfg or load_config()
     hub = Hub()
@@ -74,6 +89,7 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
     jobs = JobQueue(
         root, cfg, broadcast=hub.publish,
         on_file_changed=library.invalidate,
+        resolve_cookies=lambda: cookies_store.effective(cfg),
     )
 
     @asynccontextmanager
@@ -132,6 +148,71 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="not a file")
         job = jobs.submit(req.path, dry_run=req.dry_run, force=req.force)
         return {"job": job.snapshot()}
+
+    @app.post("/api/downloads")
+    def create_download(req: DownloadRequest) -> dict:
+        """Queue a yt-dlp download into the media root.
+
+        Only the URL comes from the browser; the cookies file is whatever the
+        config names, never a path the caller can choose -- that would turn an
+        unauthenticated UI into a file-read primitive.
+        """
+        url = req.url.strip()
+        if not is_url(url):
+            raise HTTPException(status_code=400, detail="only http(s) URLs can be downloaded")
+        try:
+            dest = resolve_within(library.root, req.dest)
+        except PathDenied as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not dest.is_dir():
+            raise HTTPException(status_code=400, detail="not a directory")
+        job = jobs.submit_download(url, library.rel(dest))
+        return {"job": job.snapshot()}
+
+    @app.get("/api/cookies")
+    def cookies_status() -> dict:
+        return cookies_store.status(cfg)
+
+    @app.put("/api/cookies")
+    async def upload_cookies(request: Request) -> dict:
+        """Store a cookies.txt sent as the raw request body.
+
+        The browser reads the file and posts its text, so no filename or path
+        from the caller is ever involved: it lands on one fixed path in the
+        config directory or it does not land at all.
+        """
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > cookies_store.MAX_BYTES:
+            raise HTTPException(status_code=413, detail="that file is far too large")
+        try:
+            cookies_store.save(await request.body())
+        except cookies_store.CookieError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the cookies file: {exc}"
+            ) from exc
+        return cookies_store.status(cfg)
+
+    @app.delete("/api/cookies")
+    def delete_cookies() -> dict:
+        cookies_store.remove()
+        return cookies_store.status(cfg)
+
+    @app.get("/api/media")
+    def media(path: str) -> FileResponse:
+        """Stream one media file for the player. FileResponse honours Range
+        requests, which is what lets the browser seek instead of downloading
+        the whole file before it can scrub."""
+        try:
+            target = resolve_within(library.root, path)
+        except PathDenied as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="no such file")
+        if target.suffix.lower() not in cfg.extensions:
+            raise HTTPException(status_code=400, detail="not a media file")
+        return FileResponse(target, media_type=media_type(target))
 
     @app.delete("/api/jobs/{job_id}")
     def cancel_job(job_id: str) -> dict:

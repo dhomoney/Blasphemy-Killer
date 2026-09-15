@@ -21,6 +21,24 @@
       <nav id="crumbs"></nav>
     </div>
 
+    <form class="fetch" id="fetch">
+      <input type="url" id="url" spellcheck="false" autocomplete="off"
+             placeholder="Paste a video URL to download into this folder…">
+      <button type="submit" id="fetch-go">Download</button>
+    </form>
+    <p class="fetch-error" id="fetch-error" hidden></p>
+
+    <div class="cookies">
+      <span class="cookies-state" id="cookies-state">Checking cookies…</span>
+      <label class="file-button">
+        <input type="file" id="cookies-file" accept=".txt,text/plain">
+        <span id="cookies-label">Upload cookies.txt</span>
+      </label>
+      <button class="link" id="cookies-remove" hidden>remove</button>
+      <span class="hint" id="cookies-hint">For age-gated or private videos. Kept in the
+        config volume — it grants access to your logged-in accounts.</span>
+    </div>
+
     <div class="toolbar">
       <label class="check">
         <input type="checkbox" id="dry-run" checked>
@@ -45,6 +63,20 @@
       <tbody id="entries"></tbody>
     </table>
     <p class="empty" id="empty" hidden>Nothing here.</p>
+  </section>
+
+  <section class="panel" id="player-panel" hidden>
+    <div class="panel-head">
+      <h2>Player</h2>
+      <span class="player-name" id="player-name"></span>
+      <button class="link" id="player-close">close</button>
+    </div>
+    <div class="player-wrap" id="player-wrap"></div>
+    <div class="timeline" id="timeline" hidden>
+      <div class="markers" id="markers"></div>
+    </div>
+    <p class="player-note" id="player-note" hidden></p>
+    <ul class="matches seekable" id="player-matches"></ul>
   </section>
 
   <section class="panel" id="queue-panel">
