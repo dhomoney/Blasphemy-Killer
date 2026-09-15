@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.3.0
+
+Pasting a URL into the web UI now ends where you wanted it to end: with a
+cleaned file. The download was only ever half the job, and finishing it by
+hand — find the file that just landed, tick it, untick dry run, confirm the
+dialog — was a second decision nobody was asking to make.
+
+### Changed
+
+- **A URL downloaded in the web UI is cleaned when it lands.** The worker that
+  finishes the download queues the clean itself, using the name yt-dlp settled
+  on, so it cannot be aimed at the wrong file or start while bytes are still
+  arriving. The clean is a queue entry of its own — its own progress, its own
+  matches, cancellable like any other job — rather than a hidden phase of the
+  download, and the player now opens when *it* finishes, on the cleaned file
+  with its matches already on the timeline.
+
+  This is the one place the UI cleans without a confirmation dialog, which is
+  deliberate: the dialog guards files that were already in your library, and a
+  URL you just pasted is not one of them. Nothing is cleaned if the download
+  failed or was cancelled.
+
+- **`POST /api/downloads` takes `clean` (default `true`)**, and download jobs
+  carry `clean`; the job it queues carries `source`, the id of the download it
+  came from.
+
+### Added
+
+- **A "Clean it when it lands" checkbox** beside the URL bar, ticked by
+  default. Untick it for the old behaviour — download only — and queue the
+  file from the listing whenever you like.
+
+The CLI is unchanged: `blasphemy-killer <url>` has always downloaded and then
+cleaned, and this brings the web UI in line with it.
+
 ## 2.2.1
 
 Three fixes to URL downloads, all found while investigating a first run of

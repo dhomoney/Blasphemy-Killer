@@ -91,11 +91,14 @@ nav#crumbs span.sep { color: var(--muted); }
 
 .fetch {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
-.fetch input {
+/* Its own line under the URL row, so the field keeps the full width. */
+.fetch .check { flex-basis: 100%; }
+.fetch input[type="url"] {
   flex: 1;
   min-width: 0;
   font: inherit;
@@ -105,7 +108,7 @@ nav#crumbs span.sep { color: var(--muted); }
   background: var(--bg);
   color: var(--text);
 }
-.fetch input:focus { outline: none; border-color: var(--accent); }
+.fetch input[type="url"]:focus { outline: none; border-color: var(--accent); }
 .fetch-error {
   color: var(--danger);
   font-size: 12px;

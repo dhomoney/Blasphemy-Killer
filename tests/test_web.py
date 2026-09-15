@@ -199,7 +199,25 @@ def test_media_missing_file_is_404(client: TestClient):
 
 
 @pytest.fixture
-def fake_download(monkeypatch, media_root: Path):
+def fake_clean(monkeypatch):
+    """Stand in for the pipeline: record the call, touch no media.
+
+    Every download now queues one of these behind it, so the stub keeps the
+    download tests from shelling out to ffprobe over a ten-byte "video".
+    """
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    calls: list[dict] = []
+
+    def _process(path, _cfg, *, dry_run, force, **_kwargs):
+        calls.append({"path": path, "dry_run": dry_run, "force": force})
+
+    monkeypatch.setattr(jobs_mod, "process", _process)
+    return calls
+
+
+@pytest.fixture
+def fake_download(monkeypatch, media_root: Path, fake_clean):
     """Stand in for yt-dlp: drop a file in the destination and report it."""
     from blasphemy_killer.web import jobs as jobs_mod
 
@@ -239,6 +257,63 @@ def test_download_lands_in_the_browsed_directory(client: TestClient, fake_downlo
     assert job["kind"] == "download"
     assert job["path"] == "shows/Clip [abc123].mp4"      # relative, for the player
     assert fake_download[0]["dest_dir"] == media_root / "shows"
+
+
+def _await_follow_up(client: TestClient, source_id: str, timeout: float = 5.0) -> dict:
+    """Poll until the clean a download queued behind it has finished."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for job in client.get("/api/jobs").json()["jobs"]:
+            if job.get("source") == source_id and job["state"] in ("done", "failed", "cancelled"):
+                return job
+        time.sleep(0.05)
+    raise AssertionError(f"no follow-up job for download {source_id}")
+
+
+def test_a_download_cleans_the_file_it_landed(client: TestClient, fake_download,
+                                              fake_clean, media_root: Path):
+    """Pasting a URL is one request, not two: the clean is queued by the worker
+    as soon as the download names its file."""
+    created = client.post("/api/downloads", json={"url": "https://example.com/v", "dest": "shows"})
+    download_job = _await_job(client, created.json()["job"]["id"])
+
+    clean_job = _await_follow_up(client, download_job["id"])
+    assert download_job["clean"] is True
+    assert clean_job["state"] == "done"
+    assert clean_job["kind"] == "process"
+    assert clean_job["path"] == "shows/Clip [abc123].mp4"
+    assert clean_job["dry_run"] is False          # cleaned and replaced, not audited
+    assert fake_clean[0]["path"] == media_root / "shows" / "Clip [abc123].mp4"
+
+
+def test_a_download_can_opt_out_of_the_clean(client: TestClient, fake_download, fake_clean):
+    created = client.post(
+        "/api/downloads", json={"url": "https://example.com/v", "clean": False},
+    )
+    job = _await_job(client, created.json()["job"]["id"])
+    assert job["state"] == "done"
+
+    import time
+    time.sleep(0.2)                               # long enough for a chain to appear
+    assert [j for j in client.get("/api/jobs").json()["jobs"] if j.get("source")] == []
+    assert fake_clean == []
+
+
+def test_a_failed_download_cleans_nothing(client: TestClient, monkeypatch, fake_clean):
+    from blasphemy_killer.download import DownloadError
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    def _boom(*_a, **_k):
+        raise DownloadError("Video unavailable")
+
+    monkeypatch.setattr(jobs_mod, "download", _boom)
+    created = client.post("/api/downloads", json={"url": "https://example.com/v"})
+    assert _await_job(client, created.json()["job"]["id"])["state"] == "failed"
+
+    import time
+    time.sleep(0.2)
+    assert fake_clean == []
 
 
 def test_download_rejects_non_http_urls(client: TestClient):

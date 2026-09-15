@@ -25,6 +25,11 @@
       <input type="url" id="url" spellcheck="false" autocomplete="off"
              placeholder="Paste a video URL to download into this folder…">
       <button type="submit" id="fetch-go">Download</button>
+      <label class="check">
+        <input type="checkbox" id="download-clean" checked>
+        Clean it when it lands
+        <span class="hint">(transcribe and mute in place — not a dry run)</span>
+      </label>
     </form>
     <p class="fetch-error" id="fetch-error" hidden></p>
 

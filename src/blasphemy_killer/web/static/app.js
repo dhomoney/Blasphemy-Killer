@@ -334,8 +334,20 @@ function describeDownload(job) {
     if (job.stage === "merging") return "merging…";
     return `downloading ${percent(job)}%`;
   }
-  if (job.state === "done") return `downloaded in ${Math.round(job.elapsed)}s`;
+  if (job.state === "done") {
+    const took = `downloaded in ${Math.round(job.elapsed)}s`;
+    return cleanPending(job) ? `${took} — cleaning next` : took;
+  }
   return job.state;
+}
+
+// True while the clean this download queued has yet to run. The follow-up job
+// carries its own row, so once it has finished the download row stops
+// promising something that already happened.
+function cleanPending(job) {
+  if (!job.clean) return false;
+  const follow = [...state.jobs.values()].find((j) => j.source === job.id);
+  return !follow || follow.state === "queued" || follow.state === "running";
 }
 
 // --- player ----------------------------------------------------------------
@@ -468,7 +480,9 @@ async function startDownload(event) {
     // wherever you were looking when you pasted the link.
     await api("/api/downloads", {
       method: "POST",
-      body: JSON.stringify({ url, dest: state.path }),
+      body: JSON.stringify({
+        url, dest: state.path, clean: $("download-clean").checked,
+      }),
     });
     input.value = "";
     fetchError("");
@@ -545,7 +559,18 @@ function fetchError(text) {
 
 async function downloadFinished(job) {
   if (job.dest === state.path) await browse(state.path);
-  if (job.path) openPlayer(job.path, job.path.split("/").pop());
+  // A clean is queued behind this download and is about to rewrite the file,
+  // so the player waits for that job instead: what opens is the cleaned file,
+  // with its matches already on the timeline.
+  if (job.path && !job.clean) openPlayer(job.path, job.path.split("/").pop());
+}
+
+async function cleanFinished(job) {
+  // The file was rewritten in place, so its size in the listing is stale.
+  const slash = job.path.lastIndexOf("/");
+  const dir = slash === -1 ? "" : job.path.slice(0, slash);
+  if (dir === state.path) await browse(state.path);
+  openPlayer(job.path, job.path.split("/").pop());
 }
 
 // --- event stream ----------------------------------------------------------
@@ -570,6 +595,9 @@ function connect() {
         // A finished clean changes the file's status in the listing.
         if (msg.job.state === "done" && !msg.job.dry_run) {
           applyScanResult(msg.job.path, true);
+          // Downloading was one request, not two: the player it was heading
+          // for opens here, now that the file is the cleaned one.
+          if (justFinished && msg.job.source) cleanFinished(msg.job).catch(console.error);
         }
         // New matches belong on the timeline of the file being watched.
         if (msg.job.path === state.player.path) renderPlayerMatches();

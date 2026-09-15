@@ -105,7 +105,10 @@ docker run --rm \
   dhomoney/blasphemy-killer:2 serve
 ```
 
-Dry run is the default; cleaning files for real takes an explicit confirmation.
+Dry run is the default for files you queue from the listing, and cleaning them
+for real takes an explicit confirmation. A URL you paste is the exception: it
+was a request for a cleaned file, so it is cleaned (see
+[Pasting a URL](#pasting-a-url)).
 Transcription shows a live progress bar, and a running job can be cancelled
 (it stops at the next transcription checkpoint, usually a second or two).
 
@@ -113,9 +116,19 @@ Transcription shows a live progress bar, and a running job can be cancelled
 
 The bar above the listing takes a video URL and hands it to yt-dlp, the same
 way the CLI does. The download lands in **the directory you are currently
-browsing**, shows its progress in the queue, and opens in the player when it
-finishes. Cancelling a download discards the partial file rather than leaving
-it in your library under a `.part` extension you would never see.
+browsing** and shows its progress in the queue.
+
+When it lands it is cleaned, without being asked twice: the file goes straight
+into a clean-in-place job — transcribed, matched and muted, exactly as the CLI
+does for a URL — and the player opens on the cleaned file with its matches
+already on the timeline. That follow-up is a queue entry of its own, so it can
+be watched and cancelled like any other job. Untick **Clean it when it lands**
+beside the URL bar to download and stop there; the file can still be queued
+from the listing afterwards.
+
+Cancelling a download discards the partial file rather than leaving it in your
+library under a `.part` extension you would never see, and nothing is cleaned
+if the download never finished.
 
 Age-gated, members-only or private videos need cookies, and the row under the
 URL bar uploads a `cookies.txt` for them. The browser reads the file and sends
@@ -342,5 +355,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.2.1`) and additionally checks host file ownership,
+`blasphemy-killer:2.3.0`) and additionally checks host file ownership,
 done-marker persistence across runs, and the web UI.

@@ -73,6 +73,7 @@ class JobRequest(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
     dest: str = ""       # directory to download into, relative to the media root
+    clean: bool = True   # queue the clean as soon as the file lands
 
 
 def media_type(path: Path) -> str:
@@ -151,7 +152,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
 
     @app.post("/api/downloads")
     def create_download(req: DownloadRequest) -> dict:
-        """Queue a yt-dlp download into the media root.
+        """Queue a yt-dlp download into the media root, and, unless the caller
+        opts out, the clean that follows it.
 
         Only the URL comes from the browser; the cookies file is whatever the
         config names, never a path the caller can choose -- that would turn an
@@ -166,7 +168,7 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not dest.is_dir():
             raise HTTPException(status_code=400, detail="not a directory")
-        job = jobs.submit_download(url, library.rel(dest))
+        job = jobs.submit_download(url, library.rel(dest), clean=req.clean)
         return {"job": job.snapshot()}
 
     @app.get("/api/cookies")

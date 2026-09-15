@@ -14,7 +14,7 @@ if [[ "${BK_E2E:-}" != "1" ]]; then
     exit 0
 fi
 
-IMAGE=${BK_IMAGE:-blasphemy-killer:2.2.1}
+IMAGE=${BK_IMAGE:-blasphemy-killer:2.3.0}
 MODEL=${BK_MODEL:-small}
 CACHE_VOLUME=${BK_CACHE_VOLUME:-bk-e2e-cache}   # persists so the model downloads once
 
@@ -84,7 +84,7 @@ report = json.load(open(f"{work}/media/speech_video.mp4.bk.json"))
 for start, end in report["muted_intervals"]:
     proc = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "ffmpeg", "-v", f"{work}:/w", "-w", "/w",
-         subprocess.os.environ.get("BK_IMAGE", "blasphemy-killer:2.2.1"),
+         subprocess.os.environ.get("BK_IMAGE", "blasphemy-killer:2.3.0"),
          "-nostdin", "-ss", str(start + 0.05), "-to", str(end - 0.05),
          "-i", "media/speech_video.mp4", "-af", "volumedetect", "-f", "null", "-"],
         capture_output=True, text=True)

@@ -9,6 +9,11 @@ Downloads share that worker rather than running alongside it. A download is
 network-bound and would happily overlap a transcription, but one queue means
 one obvious order of events, and a file cannot start being cleaned halfway
 through arriving.
+
+A download that lands queues its own clean behind it. Pasting a URL is a
+request for a cleaned file, not for a file plus a second decision, so the
+follow-up job is created here -- by the worker that knows the name yt-dlp
+finally gave it -- rather than waiting for a browser to notice and ask.
 """
 
 from __future__ import annotations
@@ -43,6 +48,8 @@ class Job:
     kind: str = PROCESS  # PROCESS | DOWNLOAD
     url: str | None = None
     dest: str = ""       # download only: directory, relative to the media root
+    clean: bool = False  # download only: clean the file once it lands
+    source: str | None = None  # process only: the download job that produced it
     state: str = QUEUED
     stage: str | None = None
     progress: float = 0.0
@@ -82,28 +89,32 @@ class JobQueue:
 
     # --- public API ---------------------------------------------------------
 
-    def submit(self, rel_path: str, *, dry_run: bool, force: bool) -> Job:
+    def submit(self, rel_path: str, *, dry_run: bool, force: bool,
+               source: str | None = None) -> Job:
         """Enqueue a file. A path already queued or running is not queued twice."""
         with self._lock:
             for existing in self._jobs.values():
                 if existing.path == rel_path and existing.state in (QUEUED, RUNNING):
                     return existing
-            job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run, force=force)
+            job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run,
+                      force=force, source=source)
             self._jobs[job.id] = job
         self._pending.put(job)
         self._publish(job)
         return job
 
-    def submit_download(self, url: str, dest: str) -> Job:
+    def submit_download(self, url: str, dest: str, *, clean: bool = True) -> Job:
         """Enqueue a URL download into dest (a directory relative to the media
-        root). A URL already queued or running is not queued twice."""
+        root). Unless clean is false, the downloaded file is queued for
+        cleaning as soon as it lands. A URL already queued or running is not
+        queued twice."""
         with self._lock:
             for existing in self._jobs.values():
                 if existing.url == url and existing.state in (QUEUED, RUNNING):
                     return existing
             job = Job(
                 id=str(next(self._ids)), path="", dry_run=True, force=False,
-                kind=DOWNLOAD, url=url, dest=dest,
+                kind=DOWNLOAD, url=url, dest=dest, clean=clean,
             )
             self._jobs[job.id] = job
         self._pending.put(job)
@@ -259,3 +270,9 @@ class JobQueue:
             self._current = None
             self._cancelled.discard(job.id)
             self._publish(job)
+
+        if job.state == DONE and job.clean and job.path:
+            # Queued, not run inline: it belongs behind anything already
+            # waiting, and it is a job of its own in the UI -- cancellable,
+            # with its own progress and its own list of matches.
+            self.submit(job.path, dry_run=False, force=False, source=job.id)
