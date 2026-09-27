@@ -19,6 +19,14 @@ def _config_dir() -> Path:
 CONFIG_DIR = _config_dir()
 USER_CONFIG_PATH = CONFIG_DIR / "config.toml"
 
+# Offered by the web UI's model dropdown; also the only values its API will
+# accept. faster-whisper treats an unknown name as a Hugging Face repo id, so
+# a fixed list keeps an unauthenticated caller from naming arbitrary repos.
+WHISPER_MODELS = [
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v3", "distil-large-v3",
+]
+
 
 @dataclass
 class Config:

@@ -112,6 +112,16 @@ was a request for a cleaned file, so it is cleaned (see
 Transcription shows a live progress bar, and a running job can be cancelled
 (it stops at the next transcription checkpoint, usually a second or two).
 
+### Choosing a whisper model
+
+The toolbar's **Model** dropdown picks the whisper model for the next jobs you
+queue — and for the clean that follows a URL download — from `tiny` (fastest,
+least accurate) up to `large-v3`. It defaults to the `model` set in
+`config.toml` (`small`), which remains the way to change the default itself.
+A job's finished row notes the model when it differs from the default, and a
+first use of any model downloads it once to the cache volume (the `small`
+default is ~460 MB).
+
 ### Pasting a URL
 
 The bar above the listing takes a video URL and hands it to yt-dlp, the same
@@ -180,8 +190,9 @@ Running natively, `--host` defaults to `127.0.0.1`, which is IPv4-only — open
 the `http://127.0.0.1:8080` URL it prints rather than `localhost`, which some
 browsers resolve to `::1` first and which would refuse the connection.
 
-The UI covers browsing, downloading, playback and queueing. The phrase list and
-settings stay in `config.toml` — see [Configuration](#configuration).
+The UI covers browsing, downloading, playback, queueing and per-job model
+selection. The phrase list and the rest of the settings stay in `config.toml` —
+see [Configuration](#configuration).
 
 ## Usage
 
@@ -361,5 +372,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.3.0`) and additionally checks host file ownership,
+`blasphemy-killer:2.4.0`) and additionally checks host file ownership,
 done-marker persistence across runs, and the web UI.

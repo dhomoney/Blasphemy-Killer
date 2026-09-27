@@ -26,7 +26,7 @@ import queue
 import tempfile
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -55,6 +55,7 @@ class Job:
     dest: str = ""       # download only: directory, relative to the media root
     clean: bool = False  # download only: clean the file once it lands
     source: str | None = None  # process only: the download job that produced it
+    model: str | None = None   # whisper model override; None = the configured default
     state: str = QUEUED
     stage: str | None = None
     progress: float = 0.0
@@ -95,21 +96,21 @@ class JobQueue:
     # --- public API ---------------------------------------------------------
 
     def submit(self, rel_path: str, *, dry_run: bool, force: bool,
-               source: str | None = None) -> Job:
+               source: str | None = None, model: str | None = None) -> Job:
         """Enqueue a file. A path already queued or running is not queued twice."""
         with self._lock:
             existing = self._active(rel_path)
             if existing is not None:
                 return existing
             job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run,
-                      force=force, source=source)
+                      force=force, source=source, model=model)
             self._jobs[job.id] = job
         self._pending.put(job)
         self._publish(job)
         return job
 
     def submit_clean(self, rel_path: str, *, source: str | None = None,
-                     force: bool = False) -> Job:
+                     force: bool = False, model: str | None = None) -> Job:
         """Queue a clean that was promised rather than asked for.
 
         submit() folds a second request for the same path into whatever is
@@ -123,7 +124,7 @@ class JobQueue:
         download it now also belongs to -- and anything else gets a job of its
         own. A redundant clean is cheap: process() skips on a valid marker.
         """
-        pending.record(rel_path, force=force)
+        pending.record(rel_path, force=force, model=model)
         with self._lock:
             existing = self._active(rel_path)
             adopted = (
@@ -131,6 +132,7 @@ class JobQueue:
                 and existing.state == QUEUED
                 and not existing.dry_run
                 and existing.force == force
+                and existing.model == model
             )
             if adopted:
                 job = existing
@@ -138,14 +140,15 @@ class JobQueue:
                     job.source = source
             else:
                 job = Job(id=str(next(self._ids)), path=rel_path, dry_run=False,
-                          force=force, source=source)
+                          force=force, source=source, model=model)
                 self._jobs[job.id] = job
         if not adopted:
             self._pending.put(job)
         self._publish(job)
         return job
 
-    def submit_download(self, url: str, dest: str, *, clean: bool = True) -> Job:
+    def submit_download(self, url: str, dest: str, *, clean: bool = True,
+                        model: str | None = None) -> Job:
         """Enqueue a URL download into dest (a directory relative to the media
         root). Unless clean is false, the downloaded file is queued for
         cleaning as soon as it lands. A URL already queued or running is not
@@ -156,7 +159,7 @@ class JobQueue:
                     return existing
             job = Job(
                 id=str(next(self._ids)), path="", dry_run=True, force=False,
-                kind=DOWNLOAD, url=url, dest=dest, clean=clean,
+                kind=DOWNLOAD, url=url, dest=dest, clean=clean, model=model,
             )
             self._jobs[job.id] = job
         self._pending.put(job)
@@ -181,7 +184,9 @@ class JobQueue:
             if not target.is_file():
                 pending.clear(entry["path"])
                 continue
-            restored.append(self.submit_clean(entry["path"], force=entry["force"]))
+            restored.append(self.submit_clean(
+                entry["path"], force=entry["force"], model=entry.get("model"),
+            ))
         return restored
 
     def cancel(self, job_id: str) -> Job | None:
@@ -269,10 +274,11 @@ class JobQueue:
             self._publish(job)
 
         target = self.root / job.path
+        cfg = replace(self.cfg, model=job.model) if job.model else self.cfg
         try:
             with tempfile.TemporaryDirectory(prefix="blasphemy-killer-") as tmp:
                 process(
-                    target, self.cfg,
+                    target, cfg,
                     dry_run=job.dry_run, force=job.force, tmp_dir=Path(tmp),
                     on_event=on_event, check_cancelled=check_cancelled,
                 )
@@ -349,4 +355,4 @@ class JobQueue:
             # Queued, not run inline: it belongs behind anything already
             # waiting, and it is a job of its own in the UI -- cancellable,
             # with its own progress and its own list of matches.
-            self.submit_clean(job.path, source=job.id)
+            self.submit_clean(job.path, source=job.id, model=job.model)

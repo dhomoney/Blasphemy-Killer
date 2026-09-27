@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.4.0
+
+The web UI can now pick the whisper model per job, so a mumbled file can get
+`large-v3` without making the whole library pay for it.
+
+### Added
+
+- **A model dropdown in the web UI toolbar.** The choice applies to the next
+  jobs queued from the listing and to the clean that follows a URL download —
+  anything from `tiny` up to `large-v3` (plus the `.en` and distil variants).
+  It defaults to the `model` from `config.toml`, which is still how the
+  default itself is changed. A first use of any model downloads it once to the
+  cache volume; models already loaded stay resident alongside each other, so
+  mixing models across jobs costs no reload. A finished job row notes the
+  model when it differs from the default.
+
+### Changed
+
+- **`POST /api/jobs` and `POST /api/downloads` take an optional `model`.** The
+  value is checked against the list the UI offers before anything is queued:
+  faster-whisper treats an unknown model name as a Hugging Face repo id, so an
+  unauthenticated API cannot be allowed to name one. A download carries its
+  model into the clean it queues, and the pending-cleans record keeps it, so a
+  restart between the two does not lose the choice. A promised clean is only
+  adopted into a clean already queued for the same file when the model matches
+  too.
+
+The CLI is unchanged: `-m/--model` has always been there, and this brings the
+web UI in line with it.
+
 ## 2.3.0
 
 Pasting a URL into the web UI now ends where you wanted it to end: with a

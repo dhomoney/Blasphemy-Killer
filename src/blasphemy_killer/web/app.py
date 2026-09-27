@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import __version__
-from ..config import Config, load_config
+from ..config import WHISPER_MODELS, Config, load_config
 from ..download import is_url
 from . import cookies as cookies_store
 from .jobs import JobQueue
@@ -74,12 +74,23 @@ class JobRequest(BaseModel):
     path: str
     dry_run: bool = True
     force: bool = False
+    model: str | None = None  # whisper model override; None = configured default
 
 
 class DownloadRequest(BaseModel):
     url: str
     dest: str = ""       # directory to download into, relative to the media root
     clean: bool = True   # queue the clean as soon as the file lands
+    model: str | None = None  # whisper model for that clean; None = default
+
+
+def check_model(model: str | None) -> str | None:
+    """The model name is handed straight to faster-whisper, which treats an
+    unknown name as a Hugging Face repo id -- so only the offered list is
+    accepted, never an arbitrary caller-supplied string."""
+    if model is not None and model not in WHISPER_MODELS:
+        raise HTTPException(status_code=400, detail="unknown whisper model")
+    return model
 
 
 def media_type(path: Path) -> str:
@@ -120,6 +131,7 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             "version": __version__,
             "root": str(root),
             "model": cfg.model,
+            "models": WHISPER_MODELS,
             "phrases": len(cfg.phrases),
             "keep_backup": cfg.keep_backup,
         }
@@ -156,7 +168,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not target.is_file():
             raise HTTPException(status_code=400, detail="not a file")
-        job = jobs.submit(req.path, dry_run=req.dry_run, force=req.force)
+        job = jobs.submit(req.path, dry_run=req.dry_run, force=req.force,
+                          model=check_model(req.model))
         return {"job": job.snapshot()}
 
     @app.post("/api/downloads")
@@ -177,7 +190,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not dest.is_dir():
             raise HTTPException(status_code=400, detail="not a directory")
-        job = jobs.submit_download(url, library.rel(dest), clean=req.clean)
+        job = jobs.submit_download(url, library.rel(dest), clean=req.clean,
+                                   model=check_model(req.model))
         return {"job": job.snapshot()}
 
     @app.get("/api/cookies")

@@ -153,6 +153,16 @@ nav#crumbs span.sep { color: var(--muted); }
 .check { display: flex; align-items: center; gap: 6px; user-select: none; }
 .hint { color: var(--muted); font-size: 12px; }
 
+select {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+select:hover { border-color: var(--accent); }
+
 button {
   font: inherit;
   padding: 6px 12px;

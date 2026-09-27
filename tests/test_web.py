@@ -162,6 +162,74 @@ def test_cancel_unknown_job_is_404(client: TestClient):
     assert client.delete("/api/jobs/does-not-exist").status_code == 404
 
 
+# --- model selection ----------------------------------------------------------
+
+
+def test_create_job_accepts_a_known_model(client: TestClient, monkeypatch):
+    from blasphemy_killer.web import jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "process", lambda *a, **k: None)
+
+    created = client.post(
+        "/api/jobs", json={"path": "movie.mp4", "dry_run": True, "model": "tiny"},
+    ).json()
+    assert created["job"]["model"] == "tiny"
+
+
+def test_create_job_defaults_to_no_model_override(client: TestClient, monkeypatch):
+    from blasphemy_killer.web import jobs as jobs_mod
+    monkeypatch.setattr(jobs_mod, "process", lambda *a, **k: None)
+
+    created = client.post("/api/jobs", json={"path": "movie.mp4", "dry_run": True}).json()
+    assert created["job"]["model"] is None
+
+
+def test_create_job_rejects_an_unknown_model(client: TestClient):
+    """The name is handed to faster-whisper, which would treat an unknown one
+    as a Hugging Face repo id -- so only the offered list is accepted."""
+    res = client.post(
+        "/api/jobs",
+        json={"path": "movie.mp4", "dry_run": True, "model": "someone/evil-repo"},
+    )
+    assert res.status_code == 400
+
+
+def test_download_rejects_an_unknown_model(client: TestClient):
+    res = client.post(
+        "/api/downloads", json={"url": "https://example.com/v", "model": "nope"},
+    )
+    assert res.status_code == 400
+
+
+def test_a_job_runs_with_its_model(client: TestClient, monkeypatch):
+    """The override reaches the pipeline as the config's model."""
+    import time
+
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    seen: list[str] = []
+
+    def _process(_path, cfg, **_kwargs):
+        seen.append(cfg.model)
+
+    monkeypatch.setattr(jobs_mod, "process", _process)
+    created = client.post(
+        "/api/jobs", json={"path": "movie.mp4", "dry_run": True, "model": "tiny"},
+    ).json()
+    job = _await_job(client, created["job"]["id"])
+    assert job["state"] == "done"
+    assert seen == ["tiny"]
+
+
+def test_a_clean_with_a_different_model_is_not_adopted(media_root: Path):
+    queue = _stopped_queue(media_root)
+    queued = queue.submit("movie.mp4", dry_run=False, force=False, model="tiny")
+    promised = queue.submit_clean("movie.mp4", source="1", model="large-v3")
+
+    assert promised.id != queued.id
+    assert promised.model == "large-v3"
+    assert len(queue.list()) == 2
+
+
 # --- streaming media for the player -----------------------------------------
 
 
@@ -287,6 +355,19 @@ def test_a_download_cleans_the_file_it_landed(client: TestClient, fake_download,
     assert fake_clean[0]["path"] == media_root / "shows" / "Clip [abc123].mp4"
 
 
+def test_a_downloads_clean_keeps_its_model(client: TestClient, fake_download, fake_clean):
+    """The model picked for the URL is the model its promised clean runs with."""
+    created = client.post(
+        "/api/downloads",
+        json={"url": "https://example.com/v", "dest": "shows", "model": "tiny"},
+    )
+    download_job = _await_job(client, created.json()["job"]["id"])
+
+    clean_job = _await_follow_up(client, download_job["id"])
+    assert download_job["model"] == "tiny"
+    assert clean_job["model"] == "tiny"
+
+
 def test_a_download_can_opt_out_of_the_clean(client: TestClient, fake_download, fake_clean):
     created = client.post(
         "/api/downloads", json={"url": "https://example.com/v", "clean": False},
@@ -377,7 +458,18 @@ def test_a_promised_clean_is_written_down(media_root: Path):
 
     queue = _stopped_queue(media_root)
     queue.submit_clean("movie.mp4", source="1")
-    assert pending.load() == [{"path": "movie.mp4", "force": False}]
+    assert pending.load() == [{"path": "movie.mp4", "force": False, "model": None}]
+
+
+def test_a_promised_clean_remembers_its_model(media_root: Path, fake_clean):
+    """A restart between download and clean must not lose the model choice."""
+    from blasphemy_killer.web import pending
+
+    pending.record("movie.mp4", model="tiny")
+    with TestClient(create_app(media_root, load_config())) as c:
+        jobs = c.get("/api/jobs").json()["jobs"]
+        assert jobs[0]["model"] == "tiny"
+        assert _await_job(c, jobs[0]["id"])["state"] == "done"
 
 
 def test_a_finished_clean_settles_the_promise(client: TestClient, fake_download, fake_clean):
@@ -499,10 +591,14 @@ def test_download_body_cannot_name_a_cookies_path(client: TestClient, fake_downl
 
 
 def test_config_endpoint_reports_root_and_model(client: TestClient, media_root: Path):
+    from blasphemy_killer.config import WHISPER_MODELS
+
     body = client.get("/api/config").json()
     assert body["root"] == str(media_root)
     assert body["model"] == load_config().model
     assert body["phrases"] > 0
+    assert body["models"] == WHISPER_MODELS
+    assert body["model"] in body["models"]
 
 
 def test_index_and_static_assets_are_served(client: TestClient):

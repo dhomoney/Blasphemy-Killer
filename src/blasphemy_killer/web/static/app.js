@@ -8,6 +8,7 @@ const state = {
   jobs: new Map(),
   selected: new Set(),
   player: { path: null, el: null, duration: 0 },
+  defaultModel: null,
 };
 
 // Extensions that get an <audio> element instead of a <video> one.
@@ -193,7 +194,9 @@ async function queueSelected() {
     try {
       await api("/api/jobs", {
         method: "POST",
-        body: JSON.stringify({ path, dry_run: dryRun, force: $("force").checked }),
+        body: JSON.stringify({
+          path, dry_run: dryRun, force: $("force").checked, model: $("model").value,
+        }),
       });
     } catch (err) {
       console.error("queue failed", path, err);
@@ -323,8 +326,9 @@ function describe(job) {
   if (job.state === "done") {
     if (job.skipped_reason === "already-processed") return "skipped — already cleaned";
     if (job.skipped_reason === "no-audio") return "skipped — no audio";
-    if (job.dry_run) return `dry run — ${job.matches.length} match(es)`;
-    return `muted ${job.muted} interval(s) in ${Math.round(job.elapsed)}s`;
+    const custom = job.model && job.model !== state.defaultModel ? ` [${job.model}]` : "";
+    if (job.dry_run) return `dry run — ${job.matches.length} match(es)${custom}`;
+    return `muted ${job.muted} interval(s) in ${Math.round(job.elapsed)}s${custom}`;
   }
   return job.state;
 }
@@ -498,6 +502,7 @@ async function startDownload(event) {
       method: "POST",
       body: JSON.stringify({
         url, dest: state.path, clean: $("download-clean").checked,
+        model: $("model").value,
       }),
     });
     input.value = "";
@@ -658,7 +663,16 @@ async function main() {
 
   try {
     const cfg = await api("/api/config");
+    state.defaultModel = cfg.model;
     $("meta").textContent = `v${cfg.version} · model ${cfg.model} · ${cfg.phrases} phrases · ${cfg.root}`;
+    const select = $("model");
+    for (const name of cfg.models || [cfg.model]) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      option.selected = name === cfg.model;
+      select.append(option);
+    }
   } catch (err) {
     console.error(err);
   }

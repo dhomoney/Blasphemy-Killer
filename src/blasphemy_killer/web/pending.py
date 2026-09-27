@@ -56,7 +56,12 @@ def _read() -> list[dict]:
         rel = entry.get("path")
         if not isinstance(rel, str) or not rel:
             continue
-        clean.append({"path": rel, "force": bool(entry.get("force"))})
+        model = entry.get("model")
+        clean.append({
+            "path": rel,
+            "force": bool(entry.get("force")),
+            "model": model if isinstance(model, str) and model else None,
+        })
     return clean
 
 
@@ -69,12 +74,12 @@ def load() -> list[dict]:
         return _read()
 
 
-def record(rel_path: str, *, force: bool = False) -> None:
+def record(rel_path: str, *, force: bool = False, model: str | None = None) -> None:
     """Note that rel_path is owed a clean. Recorded before the job is queued,
     so the crash window is the queue itself and not the writing down of it."""
     with _lock:
         entries = [e for e in _read() if e["path"] != rel_path]
-        entries.append({"path": rel_path, "force": force})
+        entries.append({"path": rel_path, "force": force, "model": model})
         _write(entries)
 
 
