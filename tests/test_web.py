@@ -694,6 +694,13 @@ def test_index_and_static_assets_are_served(client: TestClient):
     assert client.get("/static/style.css").status_code == 200
 
 
+def test_index_and_static_assets_are_not_cached(client: TestClient):
+    """Every release swaps app.js under the same URL; a heuristically cached
+    old script against the new page leaves the model dropdown empty."""
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        assert "no-cache" in client.get(path).headers["cache-control"]
+
+
 def test_no_external_asset_references(client: TestClient):
     """The container may run with --network none; nothing may come from a CDN."""
     for path in ("/", "/static/app.js", "/static/style.css"):

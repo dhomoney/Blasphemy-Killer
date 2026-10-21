@@ -137,6 +137,18 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
     app.state.jobs = jobs
     app.state.library = library
 
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):
+        # The HTML and its assets change together on every release but keep the
+        # same URLs; heuristic browser caching can otherwise pair the new page
+        # with a stale app.js (leaving e.g. the model dropdown empty). no-cache
+        # still allows 304s off the etag, so unchanged assets cost one round
+        # trip, not a re-download.
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.get("/api/config")
     def get_config() -> dict:
         return {
