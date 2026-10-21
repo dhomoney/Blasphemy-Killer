@@ -91,3 +91,44 @@ jobs:
           build-args: VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The releases page is filled from CHANGELOG.md: the notes are the section
+  # for this tag, verbatim, so they cannot drift from the changelog. Gated on
+  # the build job so a release is never announced for a version that failed to
+  # publish an image.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          # Exits non-zero when the version has no section, or an empty one,
+          # which fails the tag instead of publishing a release with no notes.
+          python3 scripts/changelog_section.py --version "$version" > notes.md
+
+          # "## 2.5.1 — short descriptor" titles the release; a bare heading
+          # leaves it named after the tag.
+          descriptor="$(python3 scripts/changelog_section.py --version "$version" --title)"
+          if [ -n "$descriptor" ]; then
+            title="$TAG — $descriptor"
+          else
+            title="$TAG"
+          fi
+
+          # Idempotent, so re-running a tag updates the notes rather than failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$title" --notes-file notes.md --latest
+          else
+            gh release create "$TAG" --verify-tag --title "$title" --notes-file notes.md --latest
+          fi
