@@ -115,6 +115,17 @@ def marker_valid(info: MediaInfo) -> bool:
     )
 
 
+def _duration_clamp_args(src: MediaInfo) -> list[str]:
+    """Clamp the output to the container's declared duration. A broken mux can
+    leave a stream's packets running past it -- a tail no player ever reaches,
+    since playback follows the container duration -- and without the clamp the
+    muxer counts those packets, making the render probe longer than the
+    original and fail verify_output's duration check."""
+    if src.duration <= 0:
+        return []
+    return ["-t", f"{src.duration:.3f}"]
+
+
 def _audio_codec_args(stream: AudioStream) -> list[str]:
     encoder = _ENCODERS.get(stream.codec, "aac")
     args = [f"-c:a:{stream.index}", encoder]
@@ -150,6 +161,7 @@ def render(src: MediaInfo, intervals: list[tuple[float, float]],
     for stream in src.audio:
         cmd += _audio_codec_args(stream)
     cmd += _metadata_args(src, len(intervals))
+    cmd += _duration_clamp_args(src)
     cmd.append(arg_path(out_tmp))
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -162,6 +174,7 @@ def stamp_only(src: MediaInfo, out_tmp: Path) -> None:
     cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(src.path),
            "-map", "0", "-c", "copy"]
     cmd += _metadata_args(src, 0)
+    cmd += _duration_clamp_args(src)
     cmd.append(arg_path(out_tmp))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:

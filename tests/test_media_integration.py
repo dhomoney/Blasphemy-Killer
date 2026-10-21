@@ -94,6 +94,49 @@ def test_render_mutes_all_tracks(fixture_mkv_2audio: Path, tmp_path: Path):
     assert probe(src).marker is not None
 
 
+def _patch_longest_mdhd_duration(path: Path, seconds: float) -> None:
+    """Shrink the longest track's declared duration without touching any
+    packets, mimicking a broken mux whose stream runs past the container
+    duration."""
+    data = bytearray(path.read_bytes())
+    atoms = []
+    i = 0
+    while (i := data.find(b"mdhd", i)) != -1:
+        # mdhd v0: version+flags, creation, modification, timescale, duration
+        timescale = int.from_bytes(data[i + 16:i + 20], "big")
+        duration = int.from_bytes(data[i + 20:i + 24], "big")
+        atoms.append((duration / timescale, i, timescale))
+        i += 1
+    assert atoms
+    _, i, timescale = max(atoms)
+    data[i + 20:i + 24] = int(seconds * timescale).to_bytes(4, "big")
+    path.write_bytes(data)
+
+
+def test_render_clamps_stray_overhang(fixture_mp4_video_overhang: Path, tmp_path: Path):
+    """Packets running past the container duration (broken mux) must not
+    inflate the render: the unreachable tail is clamped away."""
+    src = tmp_path / "broken.mp4"
+    shutil.copy(fixture_mp4_video_overhang, src)
+    _patch_longest_mdhd_duration(src, 6.0)  # video packets still run to 10s
+    info = probe(src)
+    assert info.duration < 9.0
+    out_tmp = tmp_path / "out.mp4"
+    render(info, [(1.0, 2.0)], out_tmp, tmp_path / "filter.txt")
+    verify_output(info, out_tmp)  # unclamped, the 10s video tail fails this
+    assert probe(out_tmp).duration < 9.0
+
+
+def test_stamp_only_clamps_stray_overhang(fixture_mp4_video_overhang: Path, tmp_path: Path):
+    src = tmp_path / "broken.mp4"
+    shutil.copy(fixture_mp4_video_overhang, src)
+    _patch_longest_mdhd_duration(src, 6.0)
+    info = probe(src)
+    out_tmp = tmp_path / "out.mp4"
+    stamp_only(info, out_tmp)
+    verify_output(info, out_tmp)
+
+
 def test_stamp_only_marks_without_reencode(fixture_mp4: Path, tmp_path: Path):
     src = tmp_path / "clean.mp4"
     shutil.copy(fixture_mp4, src)

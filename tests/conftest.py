@@ -29,6 +29,21 @@ def fixture_mp4(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def fixture_mp4_video_overhang(tmp_path_factory) -> Path:
+    """10s video with 8s audio: patching the video track's declared duration
+    down reproduces a broken mux whose video packets run past the container
+    duration."""
+    path = tmp_path_factory.mktemp("media") / "overhang.mp4"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "testsrc2=duration=10:size=320x240:rate=25",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "128k",
+        str(path),
+    )
+    return path
+
+
+@pytest.fixture(scope="session")
 def fixture_mkv_2audio(tmp_path_factory) -> Path:
     """10s MKV with two audio tracks (440Hz and 880Hz sines)."""
     path = tmp_path_factory.mktemp("media") / "fixture2.mkv"
