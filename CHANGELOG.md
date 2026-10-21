@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.5.1
+
+Two fixes for failures seen on real files: a clean that worked but reported
+itself failed, and a browser pairing a new page with an old script.
+
+### Fixed
+
+- **A broken mux no longer fails verification.** A damaged file can hold
+  packets that run past the duration its container declares. No player reaches
+  that tail, since playback follows the container, but ffmpeg's muxer counted
+  the packets: the output came out longer than the source and tripped the
+  duration check, failing a clean that had actually succeeded. Both the render
+  and the marker-only stamp now clamp the output to the probed duration.
+- **A stale `app.js` no longer pairs with a new page.** The web UI's HTML and
+  its assets change together on every release but keep the same URLs, so
+  heuristic browser caching could serve the new page against the old script —
+  which showed up after the 2.5.0 upgrade as an empty model dropdown. `/` and
+  `/static/*` now answer with `Cache-Control: no-cache`, which still permits a
+  304 off the etag, so an unchanged asset costs one conditional round trip
+  rather than a re-download.
+
 ## 2.5.0
 
 Better recall on movies, where dialogue sits under music and effects, and the

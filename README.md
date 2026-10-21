@@ -375,5 +375,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.5.0`) and additionally checks host file ownership,
+`blasphemy-killer:2.5.1`) and additionally checks host file ownership,
 done-marker persistence across runs, and the web UI.
