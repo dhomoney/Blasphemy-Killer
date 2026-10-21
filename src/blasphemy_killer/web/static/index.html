@@ -58,6 +58,19 @@
         <select id="model"></select>
         <span class="hint">(bigger = slower, more accurate)</span>
       </label>
+      <label class="check">
+        <input type="checkbox" id="center-channel">
+        Center channel <span class="hint">(5.1/7.1: transcribe the dialogue channel)</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="vad-filter">
+        VAD <span class="hint">(skip non-speech)</span>
+      </label>
+      <label class="check">
+        VAD threshold
+        <input type="number" id="vad-threshold" min="0" max="1" step="0.05" style="width:5em">
+        <span class="hint">(lower = keeps quieter speech)</span>
+      </label>
       <button id="queue-selected" disabled>Queue selected</button>
     </div>
 

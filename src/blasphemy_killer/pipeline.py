@@ -149,7 +149,7 @@ def process(path: Path, cfg: Config, *, dry_run: bool, force: bool, tmp_dir: Pat
     emit(StageChanged("extracting"))
     check()
     wav = tmp_dir / "audio.wav"
-    extract_wav(path, stream, wav)
+    extract_wav(path, stream, wav, center_channel=cfg.center_channel)
 
     emit(StageChanged("transcribing"))
     check()
@@ -157,6 +157,7 @@ def process(path: Path, cfg: Config, *, dry_run: bool, force: bool, tmp_dir: Pat
     words = transcribe(
         wav, model=cfg.model, language=cfg.language or None,
         cpu_threads=cfg.cpu_threads, beam_size=cfg.beam_size,
+        vad_filter=cfg.vad_filter, vad_threshold=cfg.vad_threshold,
         on_progress=lambda f: emit(Progress(f)),
         check_cancelled=check_cancelled,
     )

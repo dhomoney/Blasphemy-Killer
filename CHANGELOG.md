@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.5.0
+
+Better recall on movies, where dialogue sits under music and effects, and the
+knobs for it in both the CLI and the web UI.
+
+### Added
+
+- **Center-channel transcription.** For 5.1/7.1 sources the audio handed to
+  whisper is the center (dialogue) channel plus a little front left/right,
+  instead of a flat downmix. Falls back to the downmix if ffmpeg cannot resolve
+  the channel layout. Setting: `center_channel` (default on).
+- **VAD controls.** `vad_filter` and `vad_threshold` under `[transcription]`.
+  The threshold now defaults to 0.35 (whisper's own default is 0.5), so quieter
+  speech under music is more likely to be transcribed.
+- **CLI flags** `--center-channel/--no-center-channel`, `--vad/--no-vad` and
+  `--vad-threshold`.
+- **Web UI toolbar controls** for all three. They apply per job, follow a URL
+  download into the clean it queues, and survive a restart via the
+  pending-cleans record. `POST /api/jobs` and `POST /api/downloads` take an
+  optional `tuning` object; the threshold is range-checked and unknown keys are
+  ignored. `/api/config` reports the configured defaults.
+- **More default phrases:** `goddam`, `dear god`, `thank god`, `god help`,
+  `holy christ`, `sweet jesus`, `jesus mary and joseph`, `oh my lord`,
+  `lord have mercy`.
+
+### Fixed
+
+- **Typographic apostrophes.** `God’s sake` (curly apostrophe, as whisper and
+  subtitles often produce) never matched `for god's sake`; apostrophes are now
+  folded to ASCII before matching.
+
 ## 2.4.0
 
 The web UI can now pick the whisper model per job, so a mumbled file can get

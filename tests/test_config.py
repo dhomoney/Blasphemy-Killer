@@ -52,3 +52,11 @@ def test_config_dir_defaults_to_home(monkeypatch):
 def test_config_dir_env_override(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BK_CONFIG_DIR", str(tmp_path / "cfg"))
     assert config_mod._config_dir() == tmp_path / "cfg"
+
+
+def test_transcription_accuracy_defaults():
+    cfg = load_config()
+    assert cfg.center_channel is True
+    assert cfg.vad_filter is True
+    assert cfg.vad_threshold == 0.35
+    assert "goddam" in cfg.phrases

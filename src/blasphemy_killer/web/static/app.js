@@ -184,6 +184,16 @@ function updateQueueButton() {
 
 // --- queue -----------------------------------------------------------------
 
+// Transcription options shown in the toolbar; sent with every job and download.
+function tuning() {
+  const threshold = parseFloat($("vad-threshold").value);
+  return {
+    center_channel: $("center-channel").checked,
+    vad_filter: $("vad-filter").checked,
+    ...(Number.isFinite(threshold) ? { vad_threshold: Math.min(1, Math.max(0, threshold)) } : {}),
+  };
+}
+
 async function queueSelected() {
   const paths = [...state.selected];
   const dryRun = $("dry-run").checked;
@@ -196,6 +206,7 @@ async function queueSelected() {
         method: "POST",
         body: JSON.stringify({
           path, dry_run: dryRun, force: $("force").checked, model: $("model").value,
+          tuning: tuning(),
         }),
       });
     } catch (err) {
@@ -502,7 +513,7 @@ async function startDownload(event) {
       method: "POST",
       body: JSON.stringify({
         url, dest: state.path, clean: $("download-clean").checked,
-        model: $("model").value,
+        model: $("model").value, tuning: tuning(),
       }),
     });
     input.value = "";
@@ -664,6 +675,9 @@ async function main() {
   try {
     const cfg = await api("/api/config");
     state.defaultModel = cfg.model;
+    $("center-channel").checked = cfg.center_channel;
+    $("vad-filter").checked = cfg.vad_filter;
+    $("vad-threshold").value = cfg.vad_threshold;
     $("meta").textContent = `v${cfg.version} · model ${cfg.model} · ${cfg.phrases} phrases · ${cfg.root}`;
     const select = $("model");
     for (const name of cfg.models || [cfg.model]) {

@@ -42,6 +42,7 @@ def _get_model(name: str, cpu_threads: int):
 
 def transcribe(wav_path: Path, *, model: str, language: str | None,
                cpu_threads: int = 0, beam_size: int = 5,
+               vad_filter: bool = True, vad_threshold: float = 0.35,
                on_progress: Callable[[float], None] | None = None,
                check_cancelled: Callable[[], None] | None = None) -> list[Word]:
     """Transcribe a mono 16 kHz WAV and return the word stream with timestamps.
@@ -59,7 +60,8 @@ def transcribe(wav_path: Path, *, model: str, language: str | None,
     segments, info = whisper.transcribe(
         str(wav_path),
         word_timestamps=True,
-        vad_filter=True,
+        vad_filter=vad_filter,
+        vad_parameters={"threshold": vad_threshold} if vad_filter else None,
         condition_on_previous_text=False,
         language=language or None,
         beam_size=beam_size,

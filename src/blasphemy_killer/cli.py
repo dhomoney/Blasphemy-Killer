@@ -109,6 +109,9 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
 @click.option("--cookies", "cookies", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Netscape-format cookies.txt passed to yt-dlp for URL downloads.")
 @click.option("--force", is_flag=True, help="Reprocess files that carry the done-marker.")
 @click.option("--pad-ms", type=int, help="Symmetric mute padding in milliseconds.")
+@click.option("--center-channel/--no-center-channel", "center_channel", default=None, help="5.1/7.1: transcribe the dialogue (center) channel instead of a flat downmix.")
+@click.option("--vad/--no-vad", "vad", default=None, help="Gate transcription with voice-activity detection (default on).")
+@click.option("--vad-threshold", type=click.FloatRange(0.0, 1.0), help="VAD sensitivity; lower keeps quieter speech (default 0.35).")
 @click.option("--threads", type=int, help="CPU threads for transcription.")
 @click.option("--no-report", is_flag=True, help="Skip the JSON sidecar report.")
 @click.option("--keep-backup", is_flag=True, help="Keep the original file as .bak.")
@@ -116,7 +119,7 @@ def process_file(path: Path, cfg: Config, *, dry_run: bool, force: bool,
 @click.option("-v", "--verbose", is_flag=True)
 @click.version_option(__version__)
 def main(inputs, recursive, config_path, model, language, dry_run, output,
-         cookies, force, pad_ms, threads, no_report, keep_backup, list_phrases,
+         cookies, force, pad_ms, center_channel, vad, vad_threshold, threads, no_report, keep_backup, list_phrases,
          verbose):
     """Mute audio segments that take the Lord's name in vain in video files.
 
@@ -130,6 +133,12 @@ def main(inputs, recursive, config_path, model, language, dry_run, output,
         cfg.language = "" if language == "auto" else language
     if pad_ms is not None:
         cfg.pad_before_ms = cfg.pad_after_ms = pad_ms
+    if center_channel is not None:
+        cfg.center_channel = center_channel
+    if vad is not None:
+        cfg.vad_filter = vad
+    if vad_threshold is not None:
+        cfg.vad_threshold = vad_threshold
     if threads is not None:
         cfg.cpu_threads = threads
     if no_report:

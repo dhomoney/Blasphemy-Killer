@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 _NORMALIZE_RE = re.compile(r"[^a-z0-9']+")
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\u2032": "'"})
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,9 @@ class Match:
 
 
 def normalize_word(word: str) -> str:
-    """Lowercase and strip everything except letters, digits, and apostrophes."""
-    return _NORMALIZE_RE.sub("", word.lower())
+    """Lowercase and strip everything except letters, digits, and apostrophes.
+    Typographic apostrophes are folded to ASCII first so "God\u2019s" == "God's"."""
+    return _NORMALIZE_RE.sub("", word.lower().translate(_APOSTROPHES))
 
 
 def normalize_phrase(phrase: str) -> str:

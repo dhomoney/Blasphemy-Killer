@@ -14,6 +14,7 @@ phrases = [
     "god damn",
     "goddamned",
     "god damned",
+    "goddam",
     "goddammit",
     "god dammit",
     "goddamnit",
@@ -26,6 +27,14 @@ phrases = [
     "my god",
     "good god",
     "god almighty",
+    "dear god",
+    "thank god",
+    "god help",
+    "holy christ",
+    "sweet jesus",
+    "jesus mary and joseph",
+    "oh my lord",
+    "lord have mercy",
     "swear to god",
     "i swear to god",
     "honest to god",
@@ -46,6 +55,13 @@ phrases = [
 model = "small"     # tiny | base | small | medium | large-v3 | distil-small.en | ...
 language = "en"     # "" = auto-detect
 beam_size = 5
+# 5.1/7.1 sources: transcribe the center (dialogue) channel plus a little of
+# front L/R instead of a flat downmix, so music/effects don't drown speech.
+center_channel = true
+# Silero VAD gate; lower threshold keeps quieter speech under music (more
+# recall, slightly more noise). Set vad_filter = false to transcribe everything.
+vad_filter = true
+vad_threshold = 0.35
 cpu_threads = 0     # 0 = auto
 
 [download]

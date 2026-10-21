@@ -37,6 +37,9 @@ class Config:
     language: str = "en"
     beam_size: int = 5
     cpu_threads: int = 0
+    center_channel: bool = True
+    vad_filter: bool = True
+    vad_threshold: float = 0.35
     extensions: list[str] = field(default_factory=list)
     write_report: bool = True
     keep_backup: bool = False
@@ -88,8 +91,32 @@ def load_config(config_path: Path | None = None) -> Config:
         language=str(transcription.get("language", "en")),
         beam_size=int(transcription.get("beam_size", 5)),
         cpu_threads=int(transcription.get("cpu_threads", 0)),
+        center_channel=bool(transcription.get("center_channel", True)),
+        vad_filter=bool(transcription.get("vad_filter", True)),
+        vad_threshold=float(transcription.get("vad_threshold", 0.35)),
         extensions=[e.lower() for e in processing.get("extensions", [])],
         write_report=bool(processing.get("write_report", True)),
         keep_backup=bool(processing.get("keep_backup", False)),
         cookies=Path(str(cookies)).expanduser() if cookies else None,
     )
+
+
+TUNING_KEYS = ("center_channel", "vad_filter", "vad_threshold")
+
+
+def clean_tuning(raw: object) -> dict | None:
+    """The per-job transcription overrides in raw, or None when there are none.
+
+    Unknown keys and wrongly typed values are dropped rather than trusted: the
+    dict comes back from the browser and from pending-cleans.json."""
+    if not isinstance(raw, dict):
+        return None
+    out: dict = {}
+    for key in ("center_channel", "vad_filter"):
+        if isinstance(raw.get(key), bool):
+            out[key] = raw[key]
+    threshold = raw.get("vad_threshold")
+    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool) \
+            and 0.0 <= threshold <= 1.0:
+        out["vad_threshold"] = float(threshold)
+    return out or None

@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 from .. import config as config_module
+from ..config import clean_tuning
 from .durable import write_atomic
 
 PENDING_NAME = "pending-cleans.json"
@@ -61,6 +62,7 @@ def _read() -> list[dict]:
             "path": rel,
             "force": bool(entry.get("force")),
             "model": model if isinstance(model, str) and model else None,
+            "tuning": clean_tuning(entry.get("tuning")),
         })
     return clean
 
@@ -74,12 +76,13 @@ def load() -> list[dict]:
         return _read()
 
 
-def record(rel_path: str, *, force: bool = False, model: str | None = None) -> None:
+def record(rel_path: str, *, force: bool = False, model: str | None = None,
+           tuning: dict | None = None) -> None:
     """Note that rel_path is owed a clean. Recorded before the job is queued,
     so the crash window is the queue itself and not the writing down of it."""
     with _lock:
         entries = [e for e in _read() if e["path"] != rel_path]
-        entries.append({"path": rel_path, "force": force, "model": model})
+        entries.append({"path": rel_path, "force": force, "model": model, "tuning": tuning})
         _write(entries)
 
 

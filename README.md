@@ -275,6 +275,9 @@ phrases = ["g** d***", "j**** c*****", "oh my g**"]   # replaces the default lis
 [transcription]
 model = "small"
 language = "en"
+center_channel = true   # 5.1/7.1: transcribe the dialogue (center) channel, not a flat downmix
+vad_filter = true       # set false to transcribe everything, including speech under loud music
+vad_threshold = 0.35    # lower = keeps quieter speech (more recall, a bit more noise)
 ```
 
 Run `blasphemy-killer --list-phrases` to see the effective list. Matching is
@@ -372,5 +375,5 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` builds on the image in `BK_IMAGE` (default
-`blasphemy-killer:2.4.0`) and additionally checks host file ownership,
+`blasphemy-killer:2.5.0`) and additionally checks host file ownership,
 done-marker persistence across runs, and the web UI.

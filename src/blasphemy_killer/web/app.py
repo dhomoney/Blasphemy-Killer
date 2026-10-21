@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..config import WHISPER_MODELS, Config, load_config
@@ -70,11 +70,22 @@ class Hub:
                 pass
 
 
+class Tuning(BaseModel):
+    """Per-job transcription overrides; an unset field keeps the configured value."""
+    center_channel: bool | None = None
+    vad_filter: bool | None = None
+    vad_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    def overrides(self) -> dict | None:
+        return self.model_dump(exclude_none=True) or None
+
+
 class JobRequest(BaseModel):
     path: str
     dry_run: bool = True
     force: bool = False
     model: str | None = None  # whisper model override; None = configured default
+    tuning: Tuning | None = None
 
 
 class DownloadRequest(BaseModel):
@@ -82,6 +93,7 @@ class DownloadRequest(BaseModel):
     dest: str = ""       # directory to download into, relative to the media root
     clean: bool = True   # queue the clean as soon as the file lands
     model: str | None = None  # whisper model for that clean; None = default
+    tuning: Tuning | None = None
 
 
 def check_model(model: str | None) -> str | None:
@@ -132,6 +144,9 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
             "root": str(root),
             "model": cfg.model,
             "models": WHISPER_MODELS,
+            "center_channel": cfg.center_channel,
+            "vad_filter": cfg.vad_filter,
+            "vad_threshold": cfg.vad_threshold,
             "phrases": len(cfg.phrases),
             "keep_backup": cfg.keep_backup,
         }
@@ -169,7 +184,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
         if not target.is_file():
             raise HTTPException(status_code=400, detail="not a file")
         job = jobs.submit(req.path, dry_run=req.dry_run, force=req.force,
-                          model=check_model(req.model))
+                          model=check_model(req.model),
+                          tuning=req.tuning.overrides() if req.tuning else None)
         return {"job": job.snapshot()}
 
     @app.post("/api/downloads")
@@ -191,7 +207,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
         if not dest.is_dir():
             raise HTTPException(status_code=400, detail="not a directory")
         job = jobs.submit_download(url, library.rel(dest), clean=req.clean,
-                                   model=check_model(req.model))
+                                   model=check_model(req.model),
+                                   tuning=req.tuning.overrides() if req.tuning else None)
         return {"job": job.snapshot()}
 
     @app.get("/api/cookies")

@@ -107,15 +107,26 @@ def probe(path: Path) -> MediaInfo:
     )
 
 
-def extract_wav(path: Path, stream: AudioStream, out: Path) -> None:
-    """Extract one audio stream as mono 16 kHz PCM WAV (what whisper wants)."""
-    proc = _run([
-        "ffmpeg", "-y", "-nostdin", "-v", "error",
-        "-i", arg_path(path),
-        "-map", f"0:a:{stream.index}",
-        "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
-        arg_path(out),
-    ])
+# Dialogue lives in the center channel of 5.1/7.1 mixes; keep a little front
+# L/R for stereo-panned speech. Needs a known layout, hence the fallback below.
+_CENTER_PAN = "pan=mono|c0=FC+0.25*FL+0.25*FR"
+
+
+def extract_wav(path: Path, stream: AudioStream, out: Path, *,
+                center_channel: bool = False) -> None:
+    """Extract one audio stream as mono 16 kHz PCM WAV (what whisper wants).
+
+    With center_channel, surround sources (>= 6 channels) are mixed down from
+    the center channel instead of a flat downmix; if ffmpeg can't resolve the
+    layout it falls back to the flat downmix."""
+    base = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(path),
+            "-map", f"0:a:{stream.index}"]
+    tail = ["-ar", "16000", "-c:a", "pcm_s16le", arg_path(out)]
+    proc = None
+    if center_channel and stream.channels >= 6:
+        proc = _run(base + ["-af", _CENTER_PAN] + tail)
+    if proc is None or proc.returncode != 0:
+        proc = _run(base + ["-ac", "1"] + tail)
     if proc.returncode != 0:
         raise MediaError(f"audio extraction failed for {path}: {proc.stderr.strip()}")
 

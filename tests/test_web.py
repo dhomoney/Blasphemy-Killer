@@ -230,6 +230,91 @@ def test_a_clean_with_a_different_model_is_not_adopted(media_root: Path):
     assert len(queue.list()) == 2
 
 
+# --- transcription tuning ------------------------------------------------------
+
+
+def test_config_exposes_tuning_defaults(client: TestClient):
+    cfg = client.get("/api/config").json()
+    assert cfg["center_channel"] is True
+    assert cfg["vad_filter"] is True
+    assert cfg["vad_threshold"] == 0.35
+
+
+def test_a_job_runs_with_its_tuning(client: TestClient, monkeypatch):
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    seen: list[tuple] = []
+
+    def _process(_path, cfg, **_kwargs):
+        seen.append((cfg.center_channel, cfg.vad_filter, cfg.vad_threshold))
+
+    monkeypatch.setattr(jobs_mod, "process", _process)
+    created = client.post("/api/jobs", json={
+        "path": "movie.mp4", "dry_run": True,
+        "tuning": {"center_channel": False, "vad_filter": False, "vad_threshold": 0.2},
+    }).json()
+    job = _await_job(client, created["job"]["id"])
+    assert job["state"] == "done"
+    assert job["tuning"] == {"center_channel": False, "vad_filter": False, "vad_threshold": 0.2}
+    assert seen == [(False, False, 0.2)]
+
+
+def test_no_tuning_keeps_the_configured_values(client: TestClient, monkeypatch):
+    from blasphemy_killer.web import jobs as jobs_mod
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        jobs_mod, "process",
+        lambda _p, cfg, **_k: seen.append((cfg.center_channel, cfg.vad_threshold)),
+    )
+    created = client.post("/api/jobs", json={"path": "movie.mp4", "dry_run": True}).json()
+    job = _await_job(client, created["job"]["id"])
+    assert job["tuning"] is None
+    assert seen == [(True, 0.35)]
+
+
+def test_create_job_rejects_an_out_of_range_vad_threshold(client: TestClient):
+    res = client.post("/api/jobs", json={
+        "path": "movie.mp4", "dry_run": True, "tuning": {"vad_threshold": 4},
+    })
+    assert res.status_code == 422
+
+
+def test_a_downloads_clean_keeps_its_tuning(client: TestClient, fake_download, fake_clean):
+    created = client.post("/api/downloads", json={
+        "url": "https://example.com/v", "dest": "shows",
+        "tuning": {"center_channel": False},
+    })
+    download_job = _await_job(client, created.json()["job"]["id"])
+    clean_job = _await_follow_up(client, download_job["id"])
+    assert clean_job["tuning"] == {"center_channel": False}
+
+
+def test_a_clean_with_different_tuning_is_not_adopted(media_root: Path):
+    queue = _stopped_queue(media_root)
+    queued = queue.submit("movie.mp4", dry_run=False, force=False)
+    promised = queue.submit_clean("movie.mp4", source="1", tuning={"vad_filter": False})
+    assert promised.id != queued.id
+    assert len(queue.list()) == 2
+
+
+def test_pending_cleans_remember_tuning(tmp_path: Path):
+    from blasphemy_killer.web import pending
+    pending.record("a.mp4", tuning={"vad_threshold": 0.5})
+    pending.record("b.mp4")
+    got = {e["path"]: e["tuning"] for e in pending.load()}
+    assert got == {"a.mp4": {"vad_threshold": 0.5}, "b.mp4": None}
+
+
+def test_clean_tuning_drops_bad_values():
+    from blasphemy_killer.config import clean_tuning
+    assert clean_tuning({"vad_threshold": 9, "center_channel": "yes", "x": 1}) is None
+    assert clean_tuning({"vad_threshold": 0.5, "vad_filter": False}) == {
+        "vad_threshold": 0.5, "vad_filter": False,
+    }
+    assert clean_tuning("nope") is None
+
+
 # --- streaming media for the player -----------------------------------------
 
 
@@ -458,7 +543,9 @@ def test_a_promised_clean_is_written_down(media_root: Path):
 
     queue = _stopped_queue(media_root)
     queue.submit_clean("movie.mp4", source="1")
-    assert pending.load() == [{"path": "movie.mp4", "force": False, "model": None}]
+    assert pending.load() == [
+        {"path": "movie.mp4", "force": False, "model": None, "tuning": None},
+    ]
 
 
 def test_a_promised_clean_remembers_its_model(media_root: Path, fake_clean):

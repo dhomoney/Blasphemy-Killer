@@ -80,3 +80,9 @@ def test_empty_tokens_skipped():
 
 def test_no_phrases_no_matches():
     assert find_matches([w("hello", 0.0)], []) == []
+
+
+def test_typographic_apostrophe_is_folded():
+    assert normalize_word("God’s") == "god's"
+    words = [w("For", 0.0), w("God’s", 0.5), w("sake", 1.0)]
+    assert len(find_matches(words, ["for god's sake"])) == 1

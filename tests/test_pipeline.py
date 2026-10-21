@@ -36,7 +36,7 @@ def _fake_transcript(monkeypatch, words: list[Word], *, progress=(0.5, 1.0)):
     import blasphemy_killer.transcribe as transcribe_mod
 
     def fake(_wav, *, model, language, cpu_threads=0, beam_size=5,
-             on_progress=None, check_cancelled=None):
+             vad_filter=True, vad_threshold=0.35, on_progress=None, check_cancelled=None):
         for fraction in progress:
             if check_cancelled is not None:
                 check_cancelled()

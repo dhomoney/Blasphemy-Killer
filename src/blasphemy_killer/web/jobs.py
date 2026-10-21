@@ -56,6 +56,7 @@ class Job:
     clean: bool = False  # download only: clean the file once it lands
     source: str | None = None  # process only: the download job that produced it
     model: str | None = None   # whisper model override; None = the configured default
+    tuning: dict | None = None  # center_channel / vad_* overrides; None = configured
     state: str = QUEUED
     stage: str | None = None
     progress: float = 0.0
@@ -96,21 +97,23 @@ class JobQueue:
     # --- public API ---------------------------------------------------------
 
     def submit(self, rel_path: str, *, dry_run: bool, force: bool,
-               source: str | None = None, model: str | None = None) -> Job:
+               source: str | None = None, model: str | None = None,
+               tuning: dict | None = None) -> Job:
         """Enqueue a file. A path already queued or running is not queued twice."""
         with self._lock:
             existing = self._active(rel_path)
             if existing is not None:
                 return existing
             job = Job(id=str(next(self._ids)), path=rel_path, dry_run=dry_run,
-                      force=force, source=source, model=model)
+                      force=force, source=source, model=model, tuning=tuning)
             self._jobs[job.id] = job
         self._pending.put(job)
         self._publish(job)
         return job
 
     def submit_clean(self, rel_path: str, *, source: str | None = None,
-                     force: bool = False, model: str | None = None) -> Job:
+                     force: bool = False, model: str | None = None,
+                     tuning: dict | None = None) -> Job:
         """Queue a clean that was promised rather than asked for.
 
         submit() folds a second request for the same path into whatever is
@@ -124,7 +127,7 @@ class JobQueue:
         download it now also belongs to -- and anything else gets a job of its
         own. A redundant clean is cheap: process() skips on a valid marker.
         """
-        pending.record(rel_path, force=force, model=model)
+        pending.record(rel_path, force=force, model=model, tuning=tuning)
         with self._lock:
             existing = self._active(rel_path)
             adopted = (
@@ -133,6 +136,7 @@ class JobQueue:
                 and not existing.dry_run
                 and existing.force == force
                 and existing.model == model
+                and existing.tuning == tuning
             )
             if adopted:
                 job = existing
@@ -140,7 +144,7 @@ class JobQueue:
                     job.source = source
             else:
                 job = Job(id=str(next(self._ids)), path=rel_path, dry_run=False,
-                          force=force, source=source, model=model)
+                          force=force, source=source, model=model, tuning=tuning)
                 self._jobs[job.id] = job
         if not adopted:
             self._pending.put(job)
@@ -148,7 +152,7 @@ class JobQueue:
         return job
 
     def submit_download(self, url: str, dest: str, *, clean: bool = True,
-                        model: str | None = None) -> Job:
+                        model: str | None = None, tuning: dict | None = None) -> Job:
         """Enqueue a URL download into dest (a directory relative to the media
         root). Unless clean is false, the downloaded file is queued for
         cleaning as soon as it lands. A URL already queued or running is not
@@ -160,6 +164,7 @@ class JobQueue:
             job = Job(
                 id=str(next(self._ids)), path="", dry_run=True, force=False,
                 kind=DOWNLOAD, url=url, dest=dest, clean=clean, model=model,
+                tuning=tuning,
             )
             self._jobs[job.id] = job
         self._pending.put(job)
@@ -186,6 +191,7 @@ class JobQueue:
                 continue
             restored.append(self.submit_clean(
                 entry["path"], force=entry["force"], model=entry.get("model"),
+                tuning=entry.get("tuning"),
             ))
         return restored
 
@@ -274,7 +280,11 @@ class JobQueue:
             self._publish(job)
 
         target = self.root / job.path
-        cfg = replace(self.cfg, model=job.model) if job.model else self.cfg
+        cfg = self.cfg
+        if job.model:
+            cfg = replace(cfg, model=job.model)
+        if job.tuning:
+            cfg = replace(cfg, **job.tuning)
         try:
             with tempfile.TemporaryDirectory(prefix="blasphemy-killer-") as tmp:
                 process(
@@ -355,4 +365,5 @@ class JobQueue:
             # Queued, not run inline: it belongs behind anything already
             # waiting, and it is a job of its own in the UI -- cancellable,
             # with its own progress and its own list of matches.
-            self.submit_clean(job.path, source=job.id, model=job.model)
+            self.submit_clean(job.path, source=job.id, model=job.model,
+                              tuning=job.tuning)
