@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.6.0 — progress reporting and Windows fixes
 
 ### Added
 
