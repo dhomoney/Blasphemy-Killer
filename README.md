@@ -432,8 +432,8 @@ BK_E2E=1 scripts/e2e_docker.sh    # containerized
 ```
 
 `scripts/e2e_docker.sh` runs the image named in `BK_IMAGE` (default
-`blasphemy-killer:2.5.2`; build it first with
-`docker build -t blasphemy-killer:2.5.2 .`) and additionally checks host file
+`blasphemy-killer:2.6.0`; build it first with
+`docker build -t blasphemy-killer:2.6.0 .`) and additionally checks host file
 ownership, done-marker persistence across runs, and the web UI. Both e2e
 scripts need `uvx` (for gTTS) and bash.
 

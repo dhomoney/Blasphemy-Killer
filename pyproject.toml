@@ -1,6 +1,6 @@
 [project]
 name = "blasphemy-killer"
-version = "2.5.2"
+version = "2.6.0"
 description = "Scan video and audio files for phrases that take the Lord's name in vain and mute them"
 readme = "README.md"
 requires-python = ">=3.12"
