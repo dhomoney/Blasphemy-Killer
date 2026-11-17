@@ -34,8 +34,8 @@ from ..config import Config
 from ..download import DownloadError, download
 from ..media import MediaError
 from ..pipeline import (
-    Cancelled, Finished, MarkerUnsigned, MatchFound, MatchingComplete,
-    Progress, Skipped, StageChanged, process,
+    Cancelled, Finished, MarkerUnsigned, MatchFound, Progress, Skipped,
+    StageChanged, process,
 )
 from . import pending
 from .library import PathDenied, resolve_within
@@ -59,7 +59,8 @@ class Job:
     tuning: dict | None = None  # center_channel / vad_* overrides; None = configured
     state: str = QUEUED
     stage: str | None = None
-    progress: float = 0.0
+    progress: float = 0.0        # the whole job, 0.0-1.0 (the bar)
+    stage_progress: float = 0.0  # the current stage's own share, 0.0-1.0
     matches: list[dict] = field(default_factory=list)
     muted: int = 0
     skipped_reason: str | None = None
@@ -206,8 +207,10 @@ class JobQueue:
                 job.state = CANCELLED
             else:
                 # Already running. It only stops at the next checkpoint (a
-                # whisper segment boundary, which can be seconds away), so flag
-                # the request now rather than leaving the UI looking stuck.
+                # whisper segment boundary, the start of a stage, or just
+                # before the original is replaced -- after the render, which
+                # can take minutes), so flag the request now rather than
+                # leaving the UI looking stuck.
                 job.cancel_requested = True
         self._publish(job)
         return job
@@ -251,23 +254,31 @@ class JobQueue:
         self._current = job
         self._publish(job)
         started = time.monotonic()
+        last_published = 0.0
 
         def check_cancelled() -> None:
             if job.id in self._cancelled:
                 raise Cancelled()
 
         def on_event(event) -> None:
+            nonlocal last_published
             match event:
                 case StageChanged(stage):
                     job.stage = stage
-                case Progress(fraction):
-                    job.progress = fraction
+                    job.stage_progress = 0.0
+                case Progress(fraction, _stage, overall):
+                    job.stage_progress = fraction
+                    if overall is not None:
+                        job.progress = overall
+                    # ffmpeg and whisper report often; every one would flood
+                    # SSE. Stage changes and the final 100% always go out.
+                    now = time.monotonic()
+                    if now - last_published < 0.25 and job.progress < 1.0:
+                        return
                 case MatchFound(m):
                     job.matches.append({
                         "start": m.start, "end": m.end, "text": m.text, "phrase": m.phrase,
                     })
-                case MatchingComplete(_):
-                    job.progress = 1.0
                 case MarkerUnsigned():
                     job.unsigned_marker = True
                 case Skipped(reason, _):
@@ -277,6 +288,7 @@ class JobQueue:
                     job.elapsed = result.elapsed
                 case _:
                     return
+            last_published = time.monotonic()
             self._publish(job)
 
         target = self.root / job.path
@@ -344,7 +356,7 @@ class JobQueue:
                 dest_dir=dest, on_progress=on_progress,
             ).resolve()
             try:
-                job.path = str(landed.relative_to(root))
+                job.path = landed.relative_to(root).as_posix()
             except ValueError:
                 raise ValueError(f"download landed outside the media root: {landed}") from None
             job.state = DONE

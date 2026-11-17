@@ -18,6 +18,7 @@ def pair(tmp_path: Path) -> tuple[Path, Path]:
     return tmp, original
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX mode bits")
 def test_replaces_and_carries_permissions(pair):
     tmp, original = pair
     atomic_replace(tmp, original)

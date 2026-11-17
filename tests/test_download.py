@@ -43,6 +43,13 @@ def fake_yt_dlp(monkeypatch):
     return _FakeYDL
 
 
+def test_own_progress_bar_is_off_only_when_the_caller_reports(fake_yt_dlp):
+    download_mod.download("https://example.com/v")
+    download_mod.download("https://example.com/v", on_progress=lambda *_: None)
+    assert "noprogress" not in fake_yt_dlp.seen[0]
+    assert fake_yt_dlp.seen[1]["noprogress"] is True
+
+
 def test_no_cookies_leaves_option_out(fake_yt_dlp):
     download_mod.download("https://example.com/v")
     assert "cookiefile" not in fake_yt_dlp.seen[0]

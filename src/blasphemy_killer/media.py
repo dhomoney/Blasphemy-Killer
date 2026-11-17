@@ -6,8 +6,10 @@ import errno
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 MARKER_KEY = "BLASPHEMY_KILLER"
 
@@ -51,6 +53,95 @@ class MediaInfo:
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
+
+
+OnFraction = Callable[[float], None]
+
+
+class ProgressParser:
+    """Turn ffmpeg's `-progress` output into a fraction of the media done.
+
+    ffmpeg writes `key=value` lines in blocks, each ending in
+    `progress=continue`, then a last block ending in `progress=end`. The
+    position comes as out_time_us, out_time_ms (also microseconds, despite the
+    name) and out_time (HH:MM:SS.micro); the first one that parses is the one
+    used from then on, so a block is never counted twice. feed() returns a new
+    fraction, clamped to 0.0-1.0 and never lower than the last one, or None.
+    """
+
+    _KEYS = ("out_time_us", "out_time_ms", "out_time")
+
+    def __init__(self, duration: float):
+        self.duration = duration
+        self._key: str | None = None
+        self._last = -1.0
+
+    def feed(self, line: str) -> float | None:
+        key, sep, value = line.strip().partition("=")
+        if not sep:
+            return None
+        if key == "progress":
+            return self._emit(1.0) if value == "end" else None
+        if key not in self._KEYS or (self._key is not None and key != self._key):
+            return None
+        seconds = self._seconds(key, value)
+        if seconds is None:
+            return None  # "N/A" before the first packet is out
+        self._key = key
+        if self.duration <= 0:
+            return None  # no length to measure against: stage text only
+        return self._emit(min(1.0, max(0.0, seconds / self.duration)))
+
+    @staticmethod
+    def _seconds(key: str, value: str) -> float | None:
+        try:
+            if key == "out_time":
+                h, m, s = value.split(":")
+                return int(h) * 3600 + int(m) * 60 + float(s)
+            return int(value) / 1_000_000
+        except ValueError:
+            return None
+
+    def _emit(self, fraction: float) -> float | None:
+        if fraction <= self._last:
+            return None
+        self._last = fraction
+        return fraction
+
+
+def run_ffmpeg(cmd: list[str], *, duration: float = 0.0,
+               on_progress: OnFraction | None = None) -> subprocess.CompletedProcess:
+    """Run an ffmpeg command; with on_progress, report how far it has got.
+
+    Progress needs ffmpeg's `-progress pipe:1` on stdout while stderr still
+    has to be captured for the error message. stderr is drained on a thread so
+    neither pipe can fill and stall ffmpeg; stdout is read here, so on_progress
+    runs on the caller's thread.
+    """
+    if on_progress is None:
+        return _run(cmd)
+    cmd = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, errors="replace")
+    stderr: list[str] = []
+    drain = threading.Thread(target=lambda: stderr.append(proc.stderr.read()),
+                             name="bk-ffmpeg-stderr", daemon=True)
+    drain.start()
+    parser = ProgressParser(duration)
+    try:
+        for line in proc.stdout:
+            fraction = parser.feed(line)
+            if fraction is not None:
+                on_progress(fraction)
+        proc.wait()
+    finally:
+        if proc.poll() is None:  # on_progress raised: don't leave ffmpeg running
+            proc.kill()
+            proc.wait()
+        drain.join()
+        proc.stdout.close()
+        proc.stderr.close()
+    return subprocess.CompletedProcess(cmd, proc.returncode, "", "".join(stderr))
 
 
 def arg_path(path: Path) -> str:
@@ -113,20 +204,25 @@ _CENTER_PAN = "pan=mono|c0=FC+0.25*FL+0.25*FR"
 
 
 def extract_wav(path: Path, stream: AudioStream, out: Path, *,
-                center_channel: bool = False) -> None:
+                center_channel: bool = False, duration: float = 0.0,
+                on_progress: OnFraction | None = None) -> None:
     """Extract one audio stream as mono 16 kHz PCM WAV (what whisper wants).
 
     With center_channel, surround sources (>= 6 channels) are mixed down from
     the center channel instead of a flat downmix; if ffmpeg can't resolve the
-    layout it falls back to the flat downmix."""
+    layout it falls back to the flat downmix. on_progress receives the
+    fraction of duration decoded (a fallback attempt starts again from 0)."""
+    def run(cmd: list[str]) -> subprocess.CompletedProcess:
+        return run_ffmpeg(cmd, duration=duration, on_progress=on_progress)
+
     base = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(path),
             "-map", f"0:a:{stream.index}"]
     tail = ["-ar", "16000", "-c:a", "pcm_s16le", arg_path(out)]
     proc = None
     if center_channel and stream.channels >= 6:
-        proc = _run(base + ["-af", _CENTER_PAN] + tail)
+        proc = run(base + ["-af", _CENTER_PAN] + tail)
     if proc is None or proc.returncode != 0:
-        proc = _run(base + ["-ac", "1"] + tail)
+        proc = run(base + ["-ac", "1"] + tail)
     if proc.returncode != 0:
         raise MediaError(f"audio extraction failed for {path}: {proc.stderr.strip()}")
 

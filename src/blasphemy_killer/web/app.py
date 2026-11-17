@@ -7,7 +7,7 @@ import json
 import mimetypes
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -246,7 +246,8 @@ def create_app(root: Path, cfg: Config | None = None) -> FastAPI:
                 {"type": "scan", "path": rel, "cleaned": cleaned}
             ),
         )
-        parent = None if not here else str(Path(here).parent) if str(Path(here).parent) != "." else ""
+        up = PurePosixPath(here).parent.as_posix()
+        parent = None if not here else up if up != "." else ""
         return {"path": here, "parent": parent, "entries": [asdict(e) for e in entries]}
 
     @app.get("/api/jobs")

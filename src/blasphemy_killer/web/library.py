@@ -56,7 +56,8 @@ class Library:
         self._cache: dict[tuple[str, float, int], bool] = {}
 
     def rel(self, path: Path) -> str:
-        return str(path.relative_to(self.root)) if path != self.root else ""
+        # Forward slashes on every OS: the browser splits these on "/".
+        return path.relative_to(self.root).as_posix() if path != self.root else ""
 
     def list_dir(self, path: str | None) -> tuple[str, list[Entry]]:
         """List one directory. Returns (relative path, entries) with `cleaned`

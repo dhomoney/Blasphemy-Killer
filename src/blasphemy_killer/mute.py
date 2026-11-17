@@ -15,7 +15,9 @@ from pathlib import Path
 
 from . import __version__
 from .config import USER_CONFIG_PATH
-from .media import MARKER_KEY, AudioStream, MediaInfo, MediaError, arg_path
+from .media import (
+    MARKER_KEY, AudioStream, MediaInfo, MediaError, OnFraction, arg_path, run_ffmpeg,
+)
 
 KEY_PATH = USER_CONFIG_PATH.parent / "marker.key"
 
@@ -147,8 +149,11 @@ def _metadata_args(src: MediaInfo, n_muted: int) -> list[str]:
 
 
 def render(src: MediaInfo, intervals: list[tuple[float, float]],
-           out_tmp: Path, filter_script: Path) -> None:
-    """Render a copy of src with audio muted over intervals; video/subs stream-copied."""
+           out_tmp: Path, filter_script: Path, *,
+           on_progress: OnFraction | None = None) -> None:
+    """Render a copy of src with audio muted over intervals; video/subs stream-copied.
+
+    on_progress, if given, receives the fraction of src written so far."""
     filter_script.write_text(build_filter_script(src.audio, intervals), encoding="utf-8")
 
     cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(src.path)]
@@ -164,18 +169,19 @@ def render(src: MediaInfo, intervals: list[tuple[float, float]],
     cmd += _duration_clamp_args(src)
     cmd.append(arg_path(out_tmp))
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = run_ffmpeg(cmd, duration=src.duration, on_progress=on_progress)
     if proc.returncode != 0:
         raise MediaError(f"ffmpeg render failed: {proc.stderr.strip()}")
 
 
-def stamp_only(src: MediaInfo, out_tmp: Path) -> None:
+def stamp_only(src: MediaInfo, out_tmp: Path, *,
+               on_progress: OnFraction | None = None) -> None:
     """Metadata-only remux (-c copy) to stamp the done-marker on files with zero matches."""
     cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", arg_path(src.path),
            "-map", "0", "-c", "copy"]
     cmd += _metadata_args(src, 0)
     cmd += _duration_clamp_args(src)
     cmd.append(arg_path(out_tmp))
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = run_ffmpeg(cmd, duration=src.duration, on_progress=on_progress)
     if proc.returncode != 0:
         raise MediaError(f"ffmpeg remux failed: {proc.stderr.strip()}")

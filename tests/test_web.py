@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from blasphemy_killer.config import load_config
 from blasphemy_killer.web import cookies as cookies_module
 from blasphemy_killer.web.app import create_app
 from blasphemy_killer.web.library import Library, PathDenied, resolve_within
+from conftest import symlink_or_skip
 
 
 @pytest.fixture
@@ -67,7 +69,7 @@ def test_resolve_within_rejects_escapes(media_root: Path, candidate: str):
 def test_resolve_within_rejects_symlink_out_of_root(media_root: Path, tmp_path: Path):
     outside = tmp_path / "outside.mp4"
     outside.write_bytes(b"should stay unreachable")
-    (media_root / "sneaky.mp4").symlink_to(outside)
+    symlink_or_skip(media_root / "sneaky.mp4", outside)
     with pytest.raises(PathDenied):
         resolve_within(media_root, "sneaky.mp4")
 
@@ -771,7 +773,8 @@ def test_uploaded_cookies_are_stored_private_to_the_user(client: TestClient,
     }
     stored = isolated_config_dir / "cookies.txt"
     assert stored.read_text() == NETSCAPE
-    assert stored.stat().st_mode & 0o777 == 0o600      # not group- or world-readable
+    if os.name != "nt":  # Windows has no POSIX mode bits to check
+        assert stored.stat().st_mode & 0o777 == 0o600  # not group- or world-readable
 
 
 def test_cookies_are_never_served_back(client: TestClient):
@@ -1055,3 +1058,54 @@ def test_cross_site_reads_are_not_blocked(client: TestClient):
     """Reads are not state-changing; the browser's own same-origin policy keeps
     another site from reading the response."""
     assert client.get("/api/jobs", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+
+# --- progress ------------------------------------------------------------------
+
+
+def test_published_progress_is_overall_and_never_stuck_full(media_root: Path, monkeypatch):
+    """The bar follows the whole job: it rises through every stage and is not
+    pinned at 100% from matching onwards, as it was while only transcription
+    reported a fraction."""
+    import threading
+    import time
+
+    from blasphemy_killer.pipeline import (
+        Finished, MatchingComplete, Progress, Result, StageChanged,
+    )
+    from blasphemy_killer.web import jobs as jobs_mod
+    from blasphemy_killer.web.jobs import JobQueue
+
+    def _process(_path, _cfg, *, on_event, **_kwargs):
+        for stage, start, share in (("transcribing", 0.1, 0.7), ("rendering", 0.81, 0.18)):
+            on_event(StageChanged(stage))
+            for step in range(5):
+                on_event(Progress(step / 4, stage, start + share * step / 4))
+                time.sleep(0.3)             # past the SSE throttle
+            if stage == "transcribing":
+                on_event(StageChanged("matching"))
+                on_event(MatchingComplete(0))
+        on_event(Progress(1.0, "rendering", 1.0))
+        on_event(Finished(Result(status="processed")))
+
+    monkeypatch.setattr(jobs_mod, "process", _process)
+    seen: list[dict] = []
+    finished = threading.Event()
+
+    def broadcast(message: dict) -> None:
+        seen.append(message["job"])
+        if message["job"]["state"] == "done":
+            finished.set()
+
+    queue = JobQueue(media_root, load_config(), broadcast=broadcast)
+    queue.submit("movie.mp4", dry_run=False, force=False)
+    assert finished.wait(10)
+    queue.shutdown()
+
+    running = [j for j in seen if j["state"] == "running" and j["stage"]]
+    progress = [j["progress"] for j in running]
+    assert progress == sorted(progress)
+    rendering = [j for j in running if j["stage"] == "rendering"]
+    assert rendering and rendering[0]["progress"] < 1.0
+    assert any(0 < j["stage_progress"] < 1 for j in rendering)
+    matching = [j for j in running if j["stage"] == "matching"]
+    assert matching and all(j["progress"] < 1.0 for j in matching)

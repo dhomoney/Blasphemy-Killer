@@ -327,12 +327,21 @@ function percent(job) {
   return Math.round(Math.min(Math.max(job.progress || 0, 0), 1) * 100);
 }
 
+// Stages that measure their own share; the others show their name only.
+const MEASURED_STAGES = ["extracting", "transcribing", "rendering"];
+
 function describe(job) {
   if (job.kind === "download") return describeDownload(job);
   if (job.state === "running") {
     if (job.cancel_requested) return "cancelling…";
-    const pct = percent(job);
-    return job.stage === "transcribing" ? `transcribing ${pct}%` : (job.stage || "running");
+    if (!job.stage) return "running";
+    const overall = `${percent(job)}% overall`;
+    if (job.stage === "loading-model") return `loading model… · ${overall}`;
+    if (MEASURED_STAGES.includes(job.stage)) {
+      const own = Math.round(Math.min(Math.max(job.stage_progress || 0, 0), 1) * 100);
+      return `${job.stage} ${own}% · ${overall}`;
+    }
+    return `${job.stage} · ${overall}`;
   }
   if (job.state === "done") {
     if (job.skipped_reason === "already-processed") return "skipped — already cleaned";

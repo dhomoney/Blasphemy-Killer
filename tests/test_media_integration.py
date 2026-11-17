@@ -12,7 +12,7 @@ from blasphemy_killer.mute import (
     build_filter_script, marker_valid, marker_value, render, stamp_only,
 )
 
-from conftest import mean_volume_db, video_md5
+from conftest import mean_volume_db, symlink_or_skip, video_md5
 
 
 def test_probe_mp4(fixture_mp4: Path):
@@ -190,9 +190,32 @@ def test_write_report_refuses_symlink(tmp_path: Path):
     victim = tmp_path / "victim.txt"
     victim.write_text("precious")
     link = tmp_path / "movie.mp4.bk.json"
-    link.symlink_to(victim)
+    symlink_or_skip(link, victim)
     with pytest.raises(OSError):
         write_report(link, {"a": 1})
+    assert victim.read_text() == "precious"
+
+
+def test_write_report_writes_the_sidecar(tmp_path: Path):
+    """Used to raise AttributeError on Windows, which has no O_NOFOLLOW."""
+    import json
+    from blasphemy_killer.pipeline import write_report
+    report = tmp_path / "movie.mp4.bk.json"
+    write_report(report, {"a": 1})
+    write_report(report, {"a": 2})          # truncates, doesn't append
+    assert json.loads(report.read_text()) == {"a": 2}
+
+
+def test_write_report_refuses_symlink_without_o_nofollow(tmp_path: Path, monkeypatch):
+    """The fallback for platforms without the flag still refuses a link."""
+    from blasphemy_killer import pipeline
+    monkeypatch.setattr(pipeline, "_O_NOFOLLOW", 0)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious")
+    link = tmp_path / "movie.mp4.bk.json"
+    symlink_or_skip(link, victim)
+    with pytest.raises(OSError):
+        pipeline.write_report(link, {"a": 1})
     assert victim.read_text() == "precious"
 
 
@@ -242,3 +265,64 @@ def test_keep_backup(fixture_mp4: Path, tmp_path: Path):
     atomic_replace(replacement, src, keep_backup=True)
     assert (tmp_path / "movie.mp4.bak").exists()
     assert src.exists()
+
+
+# --- ffmpeg progress ----------------------------------------------------------
+
+
+def _fractions() -> tuple[list[float], "callable"]:
+    seen: list[float] = []
+    return seen, seen.append
+
+
+def _assert_progress(seen: list[float]) -> None:
+    assert seen, "no progress reported"
+    assert seen[-1] == 1.0
+    assert seen == sorted(seen) and all(0.0 <= f <= 1.0 for f in seen)
+
+
+def test_render_reports_progress(fixture_mp4: Path, tmp_path: Path):
+    src = tmp_path / "movie.mp4"
+    shutil.copy(fixture_mp4, src)
+    info = probe(src)
+    out_tmp = src.with_name(f".{src.stem}.bk-tmp{src.suffix}")
+    seen, on_progress = _fractions()
+    render(info, [(3.0, 4.0)], out_tmp, tmp_path / "filter.txt", on_progress=on_progress)
+    _assert_progress(seen)
+    verify_output(info, out_tmp)            # the progress flags change nothing else
+
+
+def test_extract_and_stamp_report_progress(fixture_mp4: Path, tmp_path: Path):
+    info = probe(fixture_mp4)
+    seen, on_progress = _fractions()
+    extract_wav(fixture_mp4, info.audio[0], tmp_path / "a.wav",
+                duration=info.duration, on_progress=on_progress)
+    _assert_progress(seen)
+
+    src = tmp_path / "clean.mp4"
+    shutil.copy(fixture_mp4, src)
+    seen, on_progress = _fractions()
+    stamp_only(probe(src), src.with_name(".clean.bk-tmp.mp4"), on_progress=on_progress)
+    _assert_progress(seen)
+
+
+def test_progress_run_still_reports_ffmpeg_errors(tmp_path: Path):
+    from blasphemy_killer.media import run_ffmpeg
+    proc = run_ffmpeg(["ffmpeg", "-nostdin", "-v", "error", "-i", str(tmp_path / "missing.mp4"),
+                       str(tmp_path / "out.wav")], duration=10.0, on_progress=lambda f: None)
+    assert proc.returncode != 0
+    assert "missing.mp4" in proc.stderr
+
+
+def test_a_raising_callback_stops_ffmpeg(fixture_mp4: Path, tmp_path: Path):
+    from blasphemy_killer.media import run_ffmpeg
+
+    class Stop(Exception):
+        pass
+
+    def stop(_fraction):
+        raise Stop
+
+    with pytest.raises(Stop):
+        run_ffmpeg(["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", str(fixture_mp4),
+                    str(tmp_path / "out.wav")], duration=10.0, on_progress=stop)

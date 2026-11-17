@@ -44,16 +44,24 @@ def transcribe(wav_path: Path, *, model: str, language: str | None,
                cpu_threads: int = 0, beam_size: int = 5,
                vad_filter: bool = True, vad_threshold: float = 0.35,
                on_progress: Callable[[float], None] | None = None,
+               on_stage: Callable[[str], None] | None = None,
                check_cancelled: Callable[[], None] | None = None) -> list[Word]:
     """Transcribe a mono 16 kHz WAV and return the word stream with timestamps.
 
     on_progress, if given, receives the fraction of the media transcribed so
-    far. check_cancelled is called once per segment and may raise to abort;
-    this is the only stage long enough to be worth interrupting.
+    far. on_stage hears "transcribing" once the model is ready, preceded by
+    "loading-model" when it is not loaded yet (the first use may download
+    it, with no measurable progress). check_cancelled is called once per
+    segment and may raise to abort. The render has no checkpoints of its own;
+    process() checks once more before the replace.
     """
     if cpu_threads <= 0:
         cpu_threads = min(8, available_cpus())
+    if on_stage is not None and (model, cpu_threads) not in _model_cache:
+        on_stage("loading-model")
     whisper = _get_model(model, cpu_threads)
+    if on_stage is not None:
+        on_stage("transcribing")
 
     # faster-whisper returns a generator: segments are produced as the audio is
     # consumed, which is what makes progress reporting possible at all.

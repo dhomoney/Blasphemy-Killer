@@ -52,7 +52,7 @@ phrases = [
 ]
 
 [transcription]
-model = "small"     # tiny | base | small | medium | large-v3 | distil-small.en | ...
+model = "small"     # tiny | base | small | medium | large-v3 | distil-large-v3 (and .en variants); the web UI offers only these, the CLI takes any faster-whisper name
 language = "en"     # "" = auto-detect
 beam_size = 5
 # 5.1/7.1 sources: transcribe the center (dialogue) channel plus a little of
@@ -78,4 +78,4 @@ extensions = [
     ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav",
 ]
 write_report = true   # write a <file>.bk.json sidecar describing what was muted
-keep_backup = false   # keep the original as <file>.bak instead of deleting it
+keep_backup = false   # keep the original as <file>.bak when anything was muted (files with no matches are only stamped)

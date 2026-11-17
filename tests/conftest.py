@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -57,6 +58,17 @@ def fixture_mkv_2audio(tmp_path_factory) -> Path:
         str(path),
     )
     return path
+
+
+def symlink_or_skip(link: Path, target: Path) -> None:
+    """Create a symlink, or skip the test where this user may not (Windows
+    without Developer Mode or admin rights)."""
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt":
+            pytest.skip(f"cannot create symlinks here: {exc}")
+        raise
 
 
 def mean_volume_db(path: Path, start: float, end: float, audio_index: int = 0) -> float:

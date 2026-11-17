@@ -43,7 +43,9 @@ def write_atomic(path: Path, text: str, *, mode: int = 0o644) -> Path:
     tmp = path.with_name(f".{path.name}.new")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # newline="": write the text as given. Text mode would turn each "\n"
+        # into "\r\n" on Windows and change what was uploaded.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

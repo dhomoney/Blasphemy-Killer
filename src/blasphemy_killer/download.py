@@ -129,6 +129,9 @@ def download(url: str, output: Path | None = None, cookies: Path | None = None,
         reporter = _Reporter(on_progress)
         opts["progress_hooks"] = [reporter.downloading]
         opts["postprocessor_hooks"] = [reporter.postprocessing]
+        # The caller draws the progress; yt-dlp's own bar would go to stdout
+        # and interleave with it. Its other lines stay.
+        opts["noprogress"] = True
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

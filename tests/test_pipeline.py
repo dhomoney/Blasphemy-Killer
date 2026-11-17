@@ -36,7 +36,10 @@ def _fake_transcript(monkeypatch, words: list[Word], *, progress=(0.5, 1.0)):
     import blasphemy_killer.transcribe as transcribe_mod
 
     def fake(_wav, *, model, language, cpu_threads=0, beam_size=5,
-             vad_filter=True, vad_threshold=0.35, on_progress=None, check_cancelled=None):
+             vad_filter=True, vad_threshold=0.35, on_progress=None, on_stage=None,
+             check_cancelled=None):
+        if on_stage is not None:
+            on_stage("transcribing")
         for fraction in progress:
             if check_cancelled is not None:
                 check_cancelled()
@@ -64,7 +67,8 @@ def test_file_with_matches_emits_stages_matches_and_finish(
     assert _stages(events) == ["probing", "extracting", "transcribing", "matching"]
     assert [e.match.phrase for e in events if isinstance(e, MatchFound)] == ["god damn"]
     assert [e.count for e in events if isinstance(e, MatchingComplete)] == [1]
-    assert [e.fraction for e in events if isinstance(e, Progress)] == [0.5, 1.0]
+    assert [e.fraction for e in events
+            if isinstance(e, Progress) and e.stage == "transcribing"] == [0.0, 0.5, 1.0]
     assert isinstance(events[-1], Finished)
     assert result.status == "dry-run"
     assert len(result.matches) == 1
@@ -232,3 +236,114 @@ def test_a_cancel_during_rendering_is_honoured_before_the_swap(
 
     assert target.read_bytes() == before
     assert not list(tmp_path.glob(".*bk-tmp*"))
+
+
+# --- overall progress ----------------------------------------------------------
+
+
+def _overall(events: list) -> list[float]:
+    return [e.overall for e in events if isinstance(e, Progress)]
+
+
+def _assert_rises_to_one(events: list) -> None:
+    overall = _overall(events)
+    assert overall, "no progress emitted"
+    assert overall == sorted(overall), f"overall went down: {overall}"
+    assert overall[-1] == 1.0
+    assert all(0.0 <= v <= 1.0 for v in overall)
+    # The 100% comes before Finished, so a consumer can show it.
+    last_progress = max(i for i, e in enumerate(events) if isinstance(e, Progress))
+    assert isinstance(events[-1], Finished) and last_progress < len(events) - 1
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_overall_progress_rises_to_one(fixture_mp4: Path, tmp_path: Path, cfg,
+                                       monkeypatch, dry_run: bool):
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    _fake_transcript(monkeypatch, [Word(text="god", start=1.0, end=1.4),
+                                   Word(text="damn", start=1.4, end=1.9)])
+    events: list = []
+    process(target, cfg, dry_run=dry_run, force=False, tmp_dir=tmp_path,
+            on_event=_record(events))
+    _assert_rises_to_one(events)
+    # Every stage change is followed by its own 0% Progress.
+    for i, e in enumerate(events):
+        if isinstance(e, StageChanged):
+            nxt = events[i + 1]
+            assert isinstance(nxt, Progress) and (nxt.stage, nxt.fraction) == (e.stage, 0.0)
+    # Transcription is the bulk of the run, not the whole of it.
+    transcribed = [e.overall for e in events
+                   if isinstance(e, Progress) and e.stage == "transcribing" and e.fraction == 1.0]
+    assert transcribed and transcribed[0] < 1.0
+
+
+def test_render_progress_is_reported(fixture_mp4: Path, tmp_path: Path, cfg, monkeypatch):
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    _fake_transcript(monkeypatch, [Word(text="god", start=1.0, end=1.4),
+                                   Word(text="damn", start=1.4, end=1.9)])
+    events: list = []
+    process(target, cfg, dry_run=False, force=False, tmp_dir=tmp_path,
+            on_event=_record(events))
+    for stage in ("extracting", "rendering"):
+        fractions = [e.fraction for e in events if isinstance(e, Progress) and e.stage == stage]
+        assert fractions[0] == 0.0 and fractions[-1] == 1.0, (stage, fractions)
+
+
+def test_a_skipped_file_goes_straight_to_one(fixture_mp4: Path, tmp_path: Path, cfg, monkeypatch):
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    _fake_transcript(monkeypatch, [Word(text="hello", start=0.0, end=0.5)])
+    process(target, cfg, dry_run=False, force=False, tmp_dir=tmp_path)  # stamps it
+
+    events: list = []
+    process(target, cfg, dry_run=False, force=False, tmp_dir=tmp_path, on_event=_record(events))
+    _assert_rises_to_one(events)
+
+
+def test_loading_the_model_is_announced_once(monkeypatch, tmp_path: Path):
+    """A model not loaded yet shows as its own stage; a cached one doesn't."""
+    import blasphemy_killer.transcribe as transcribe_mod
+
+    class Info:
+        duration = 10.0
+
+    class Segment:
+        end = 10.0
+        words = []
+
+    class Model:
+        def transcribe(self, *_a, **_k):
+            return iter([Segment()]), Info()
+
+    monkeypatch.setattr(transcribe_mod, "_model_cache", {})
+    monkeypatch.setattr(transcribe_mod, "_get_model", lambda name, threads: (
+        transcribe_mod._model_cache.setdefault((name, threads), Model())))
+    for expected in (["loading-model", "transcribing"], ["transcribing"]):
+        stages: list[str] = []
+        transcribe_mod.transcribe(tmp_path / "a.wav", model="tiny", language=None,
+                                  cpu_threads=1, on_stage=stages.append)
+        assert stages == expected
+
+
+def test_model_load_shows_transcribing_once(fixture_mp4: Path, tmp_path: Path, cfg,
+                                            monkeypatch):
+    # From the owner's test run: -v printed "stage: transcribing" before and
+    # after "stage: loading-model".
+    import blasphemy_killer.transcribe as transcribe_mod
+
+    def fake(_wav, *, on_stage=None, on_progress=None, **_kw):
+        on_stage("loading-model")
+        on_stage("transcribing")
+        on_progress(1.0)
+        return []
+
+    monkeypatch.setattr(transcribe_mod, "transcribe", fake)
+    target = tmp_path / "clip.mp4"
+    target.write_bytes(fixture_mp4.read_bytes())
+    events: list = []
+    process(target, cfg, dry_run=True, force=False, tmp_dir=tmp_path,
+            on_event=_record(events))
+    assert _stages(events) == ["probing", "extracting", "loading-model",
+                               "transcribing", "matching"]

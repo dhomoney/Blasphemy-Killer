@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Progress for the whole clean, in the CLI too.** The CLI showed nothing
+  while it worked; it now keeps a status line on stderr (`[3/12] 21%
+  movie.mkv - transcribing 58%` on a terminal, a plain line per 10%
+  elsewhere). `--no-progress` turns it off (`--progress`, the default, keeps
+  it on), and `-v` prints each stage. While the status line is on, yt-dlp's
+  own progress bar is off during URL downloads.
+- **The audio extraction and the render report progress.** Both run ffmpeg
+  with `-progress`, and the stages are weighed into one overall figure per
+  file. The web UI's bar follows it instead of jumping to 100% at matching and
+  sitting there through the render, and shows `loading model…` while the
+  whisper model loads.
+
+### Changed
+
+- **`/api/jobs` progress covers the whole job.** `progress` is now the job's
+  overall share (0–1) rather than transcription's alone, the current stage's
+  own share is in the new `stage_progress`, a `loading-model` stage can appear
+  before transcription, and progress updates are sent at most four times a
+  second.
+
+### Fixed
+
+- **Windows: the report is written.** `os.O_NOFOLLOW` does not exist on
+  Windows, so a clean that had already replaced the file crashed before its
+  `.bk.json` sidecar was written.
+- **Windows: media paths use forward slashes** in the web API, and an uploaded
+  `cookies.txt` keeps its line endings.
+
 ## 2.5.2 — security hardening
 
 Hardening from a security scan of the repo and the published 2.5.1 image.
